@@ -176,7 +176,11 @@ def compare_symbols(dxf_counter: Counter, ulkes_symbol_counter: Counter) -> pd.D
 def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
     """DXF側で機器符号パターンに一致しなかったラベル（`rejected_counter`）のうち、
     比較キーの英字プレフィックスがULKES側プレフィックス集合に含まれるものだけを
-    救済し、比較キーで集計したCounterとして返す（2026-09-08、要求10）。
+    救済し、**原文のまま**集計したCounterとして返す（2026-09-08、要求10）。
+
+    原文のまま返すのは、DXF側プレビュー（`compare_pair()`が返す
+    `dxf_display_counter`）に合流させ、括弧内の仕様情報を確認できるようにする
+    ため（比較そのものには`compare_pair()`内で比較キーへ変換してから使う）。
 
     プレフィックス集合はそのペアのULKES側記号だけから求める（他図番のプレフィックス
     で誤って救済しないため）。DXFをアップロードしていてもULKESが無い図番では
@@ -185,10 +189,9 @@ def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
     prefixes = ulkes_prefix_set(ulkes_symbols)
     rescued = Counter()
     for label, count in rejected_counter.items():
-        key = comparison_key(label)
-        prefix = extract_alphabetic_part(key)
+        prefix = extract_alphabetic_part(comparison_key(label))
         if prefix and prefix in prefixes:
-            rescued[key] += count
+            rescued[label] += count
     return rescued
 
 
@@ -236,19 +239,36 @@ def compare_pair(dxf_counter: Counter, ulkes_symbols, rejected_counter: Counter 
         rejected_counter: DXF側で機器符号パターンに一致しなかったラベルの
             {ラベル: 個数}（省略時は救済を行わない）。
 
-    戻り値: {'symbol_df': DataFrame(DIFF_COLUMNS)}
+    戻り値:
+        {
+          'symbol_df': DataFrame(DIFF_COLUMNS),
+          'dxf_display_counter': Counter（原文のまま。通常の機器符号候補＋
+              救済されたラベルを合わせたもの。DXF側プレビュー表示に使う。
+              救済されたラベルは元の`dxf_counter`には含まれないため、
+              呼び出し元は`dxf_map[drawing_number]`ではなく必ずこちらを
+              プレビューに使うこと——さもないと比較表で「両方」となっている
+              符号がプレビューにだけ表示されない食い違いが生じる
+              2026-09-08、ユーザー報告で発覚）,
+        }
     """
-    keyed_dxf_counter = Counter()
-    for label, count in dxf_counter.items():
-        keyed_dxf_counter[comparison_key(label)] += count
-
+    # 原文のまま合流させる（比較キーへの変換はこのあと行う）。
+    # DXF側プレビューにはこちらを使う——通常候補には無い救済ラベルの
+    # 括弧内の仕様情報（例: "TB005 (30A)"）を確認できるようにするため。
+    dxf_display_counter = Counter(dxf_counter)
     if rejected_counter:
-        keyed_dxf_counter.update(rescue_by_ulkes_prefix(rejected_counter, ulkes_symbols))
+        dxf_display_counter.update(rescue_by_ulkes_prefix(rejected_counter, ulkes_symbols))
+
+    keyed_dxf_counter = Counter()
+    for label, count in dxf_display_counter.items():
+        keyed_dxf_counter[comparison_key(label)] += count
 
     ulkes_symbol_counter, ulkes_prefix_counter = classify_symbols(ulkes_symbols)
     _transfer_prefix_completions(keyed_dxf_counter, ulkes_symbol_counter, ulkes_prefix_counter)
 
-    return {'symbol_df': compare_symbols(keyed_dxf_counter, ulkes_symbol_counter)}
+    return {
+        'symbol_df': compare_symbols(keyed_dxf_counter, ulkes_symbol_counter),
+        'dxf_display_counter': dxf_display_counter,
+    }
 
 
 def pair_by_drawing_number(dxf_map: dict, ulkes_map: dict) -> tuple:

@@ -51,10 +51,12 @@ def test_ulkes_prefix_set_empty_when_no_ulkes_symbols():
 
 def test_rescue_by_ulkes_prefix_rescues_matching_prefix():
     """括弧前にスペースがある非候補ラベルが、ULKES側に同プレフィックスの
-    症候があれば比較キーで救済される（組み合わせ表#2）。"""
+    症候があれば救済される（組み合わせ表#2）。戻り値は原文のまま
+    （比較キーへの変換はcompare_pair()の内部で行う。DXF側プレビューで
+    括弧内の仕様情報を確認できるようにするため）。"""
     rejected = Counter({"CB004A (3A)": 1})
     rescued = rescue_by_ulkes_prefix(rejected, ["CB004A"])
-    assert rescued == Counter({"CB004A": 1})
+    assert rescued == Counter({"CB004A (3A)": 1})
 
 
 def test_rescue_by_ulkes_prefix_ignores_non_matching_prefix():
@@ -191,3 +193,40 @@ def test_compare_symbols_still_sorted_alphabetically():
     ulkes_counter = Counter({"C1": 1, "R10": 1})
     df = compare_symbols(dxf_counter, ulkes_counter)
     assert df['符号'].tolist() == sorted(df['符号'].tolist())
+
+
+# --- dxf_display_counter（DXF側プレビューの透明性。2026-09-08、ユーザー報告で発覚） ---
+
+def test_compare_pair_dxf_display_counter_includes_normal_candidates():
+    """通常の機器符号候補はdxf_display_counterにそのまま含まれる。"""
+    dxf_counter = Counter({"R10": 2})
+    result = compare_pair(dxf_counter, [])
+    assert result['dxf_display_counter'] == Counter({"R10": 2})
+
+
+def test_compare_pair_dxf_display_counter_includes_rescued_labels_in_original_text():
+    """救済されたラベルは原文のまま（括弧を含む）dxf_display_counterに合流する。
+    比較表では『両方』となるのに、プレビューには一切出ないという食い違いを防ぐための
+    回帰テスト。"""
+    dxf_counter = Counter()
+    rejected_counter = Counter({"TB005 (30A)": 1})
+    ulkes_symbols = ["TB005"]
+
+    result = compare_pair(dxf_counter, ulkes_symbols, rejected_counter)
+
+    assert result['dxf_display_counter'] == Counter({"TB005 (30A)": 1})
+    # 比較表側はキー化されて"TB005"としてULKESと一致する
+    df = result['symbol_df']
+    row = df[df['符号'] == 'TB005'].iloc[0]
+    assert row['区分'] == '両方'
+
+
+def test_compare_pair_dxf_display_counter_excludes_non_rescued_rejected_labels():
+    """プレフィックスが一致せず救済されなかった非候補ラベルはdxf_display_counterに含まれない。"""
+    dxf_counter = Counter()
+    rejected_counter = Counter({"GND": 1})
+    ulkes_symbols = ["TB005"]
+
+    result = compare_pair(dxf_counter, ulkes_symbols, rejected_counter)
+
+    assert result['dxf_display_counter'] == Counter()

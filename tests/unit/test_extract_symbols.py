@@ -109,3 +109,66 @@ def test_shortfall_and_excess_completion_unchanged():
 
     assert symbols == ["CNCB001W", "CNCB?001", "CNCB?002", "R1", "R2?"]
     assert row_count == 2
+
+
+# --- 符号/構成コメントの個数比較による採用（2026-09-08、ユーザー指定の3例） ---
+
+def test_field_selection_both_agree_prefers_comment():
+    """符号=範囲表記(8個)・構成コメント=アンダースコア区切り(8個)で同数 → 構成コメントを採用。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "CNFAN01-08", "CNFAN01_CNFAN02_CNFAN03_CNFAN04_CNFAN05_CNFAN06_CNFAN07_CNFAN08", 8),
+    ])
+
+    symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    assert symbols == [f"CNFAN0{i}" for i in range(1, 9)]
+
+
+def test_field_selection_comment_has_fewer_items_uses_symbol_range():
+    """構成コメントが1個不足(7個) → 符号の範囲表記(8個)を採用する。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "CNFAN01-08", "CNFAN01_CNFAN02_CNFAN03_CNFAN04_CNFAN05_CNFAN06_CNFAN07", 8),
+    ])
+
+    symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    assert symbols == [f"CNFAN0{i}" for i in range(1, 9)]
+
+
+def test_field_selection_symbol_range_has_fewer_items_uses_comment():
+    """符号の範囲表記が1個不足(7個) → 構成コメント(8個)を採用する。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "CNFAN01-07", "CNFAN01_CNFAN02_CNFAN03_CNFAN04_CNFAN05_CNFAN06_CNFAN07_CNFAN08", 8),
+    ])
+
+    symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    assert symbols == [f"CNFAN0{i}" for i in range(1, 9)]
+
+
+def test_field_selection_free_text_comment_is_not_treated_as_symbol_list():
+    """構成コメントが「_」を含まない自由記述メモの場合、機器符号として採用しない
+    （符号にフォールバックする）。実データのELB001行で確認した回帰。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "ELB001", "2接点タイプ。UPS遮断用に使用する。", 1),
+    ])
+
+    symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    assert symbols == ["ELB001"]
+
+
+def test_field_selection_symbol_range_with_invalid_order_is_not_expanded():
+    """符号の範囲表記で開始>終了の場合は範囲展開せず単一の値として扱う。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "CNFAN08-01", None, 1),
+    ])
+
+    symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    assert symbols == ["CNFAN08-01"]

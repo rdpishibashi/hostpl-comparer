@@ -7,6 +7,43 @@ import pandas as pd
 
 REQUIRED_COLUMNS = ["符号", "構成コメント", "構成数", "図面番号"]
 
+# 「符号」列の範囲表記（例: "SSR01-08" → SSR01, SSR02, ..., SSR08）。
+# 開始・終了の桁数は開始側の表記に揃える（"01"なら2桁ゼロ埋め）。
+_RANGE_PATTERN = re.compile(r'^([A-Za-z]+)(\d+)-(\d+)$')
+
+
+def _expand_symbol_field(value, allow_single_fallback=True):
+    """「符号」または「構成コメント」列の1つの値を機器符号のリストに展開する。
+
+    - "_"を含む場合はそれで分割する（詳細リストとしての表記）。
+    - "_"を含まず「{英字}{数字}-{数字}」形式（例: "SSR01-08"）の場合は、
+      数字部分を範囲として展開する（開始 > 終了の場合は範囲とみなさない）。
+    - どちらでもなく `allow_single_fallback=True` の場合、そのままの値を
+      単一要素のリストとして扱う。`allow_single_fallback=False` の場合は
+      空リストを返す（「構成コメント」列がただの自由記述メモで機器符号の
+      リストではない場合に、その文字列自体を機器符号として誤採用しない
+      ようにするため。2026-09-08、実データ`ELB001`行の
+      構成コメント"2接点タイプ。UPS遮断用に使用する。"で確認）。
+    - 前後の空白を除去した結果が空文字列の要素は含めない。
+    """
+    if not value:
+        return []
+
+    if "_" in value:
+        return [s for s in value.split("_") if s.strip()]
+
+    m = _RANGE_PATTERN.match(value)
+    if m:
+        prefix, start_str, end_str = m.groups()
+        start, end = int(start_str), int(end_str)
+        if start <= end:
+            width = len(start_str)
+            return [f"{prefix}{i:0{width}d}" for i in range(start, end + 1)]
+
+    if allow_single_fallback:
+        return [value] if value.strip() else []
+    return []
+
 
 def extract_alphabetic_part(symbol):
     """
@@ -55,29 +92,39 @@ def _find_assembly_blocks(df):
 def _process_rows(df, row_indices):
     """指定した行インデックス群から回路記号リストを構築する。
 
-    符号/構成コメントの優先順位・"_"によるセパレータ分解・構成数との過不足補完
-    （不足分は末尾に"{アルファベット部分}?{3桁連番}"を追加、超過分は先頭からqty件に
-    切り詰めた上で末尾から"?"を追記）を1行ずつ適用する。
+    「符号」と「構成コメント」は手入力のため表記が食い違うことがあり、
+    どちらか機器符号の**個数が多い方**を採用する（2026-09-08、ユーザー指定。
+    「構成コメント」は「符号」の詳細リストという位置づけだが、入力漏れ等で
+    「符号」側の方が正確な場合もあるため）。個数が同数の場合は「構成コメント」を
+    優先する（従来の「構成コメントに"_"が含まれていれば優先」という規則と
+    後方互換）。個数の判定・分解方法は`_expand_symbol_field()`を参照
+    （"_"分割、または「符号」列の範囲表記"SSR01-08"の展開）。
+
+    構成数との過不足補完（不足分は末尾に"{アルファベット部分}?{3桁連番}"を追加、
+    超過分は先頭からqty件に切り詰めた上で末尾から"?"を追記）は1行ずつ適用する。
     """
     circuit_symbols = []
 
     for idx in row_indices:
         row = df.iloc[idx]
 
-        # 符号または構成コメントからシンボルを取得
-        if pd.notna(row["構成コメント"]) and "_" in str(row["構成コメント"]):
-            # 構成コメントに"_"が含まれる場合はそちらを使用
-            base_symbols = str(row["構成コメント"]).split("_")
-        else:
-            # そうでなければ符号を使用
-            symbol_str = str(row["符号"]) if pd.notna(row["符号"]) else ""
-            base_symbols = symbol_str.split("_") if "_" in symbol_str else [symbol_str]
+        symbol_field = str(row["符号"]) if pd.notna(row["符号"]) else ""
+        comment_field = str(row["構成コメント"]) if pd.notna(row["構成コメント"]) else ""
+
+        symbol_candidates = _expand_symbol_field(symbol_field)
+        # 構成コメントは「_」区切りまたは範囲表記の場合のみ機器符号リストとして
+        # 扱う。単なる自由記述メモ（区切りなし）は機器符号として採用しない。
+        comment_candidates = _expand_symbol_field(comment_field, allow_single_fallback=False)
+
+        # 構成コメントが機器符号リストとして解釈でき、かつ個数が符号以上なら
+        # 構成コメントを採用する。それ以外は符号を採用する。
+        base_symbols = (
+            comment_candidates if comment_candidates and len(comment_candidates) >= len(symbol_candidates)
+            else symbol_candidates
+        )
 
         # 数値型の場合は整数に変換する
         qty = int(row["構成数"]) if pd.notna(row["構成数"]) else 0
-
-        # 空文字列を除外
-        base_symbols = [s for s in base_symbols if s.strip()]
 
         # 回路記号の個数を取得
         symbol_count = len(base_symbols)

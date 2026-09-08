@@ -221,7 +221,10 @@ def _render_results():
                 col1, col2 = st.columns(2)
                 with col1:
                     st.caption("DXF側 機器符号リスト")
-                    dxf_symbols = _flatten_counter_sorted(dxf_map[drawing_number])
+                    # 比較表には「dxf_display_counter」（通常候補＋ULKES側プレフィックス
+                    # による救済ラベル）を使う。dxf_map[drawing_number]は救済分を含まない
+                    # ため、これを使うと比較表の「両方」がプレビューに出ない食い違いが生じる。
+                    dxf_symbols = _flatten_counter_sorted(pair_data["dxf_display_counter"])
                     _render_symbol_list(
                         dxf_symbols,
                         f"{drawing_number}_dxf_labels.txt",
