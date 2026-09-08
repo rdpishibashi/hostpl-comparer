@@ -206,7 +206,16 @@ def _render_results():
             st.write("、".join(drawing_numbers))
 
     if result["pairs"]:
-        st.subheader("図番ごとの比較結果")
+        st.subheader(
+            "図番ごとの比較結果",
+            help=(
+                "色分け:\n"
+                "- 🔵 青 = 図面のみ\n"
+                "- 🟢 緑 = ULKESのみ\n"
+                "- 🟡 黄 = 両方にあるが個数が不一致\n"
+                "- 無色 = 両方にあり個数も一致"
+            ),
+        )
         for drawing_number in result["pairs"]:
             pair_data = result["per_pair"][drawing_number]
             with st.expander(drawing_number, expanded=False):
