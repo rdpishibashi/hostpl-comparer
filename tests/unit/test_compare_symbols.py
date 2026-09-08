@@ -141,7 +141,9 @@ def test_transfer_leftover_collapses_into_prefix_placeholder_row():
 
 def test_transfer_budget_exceeds_candidate_count_leaves_remainder_as_placeholder():
     """組み合わせ表#6: budgetが振替先の図面個数を上回る場合、DXF個数分だけ消費し
-    残りは`{prefix}?`に集約される。"""
+    残りは1行に集約される。DXF側にそのプレフィックスの符号が1種類だけ
+    （CNCB001W）なので、その符号名+『?』にする（2026-09-09、ユーザー指定。
+    抽象的な`{prefix}?`より分かりやすくするため）。"""
     dxf_counter = Counter({"CNCB001W": 1})
     ulkes_symbols = ["CNCB?001", "CNCB?002", "CNCB?003"]  # budget=3
 
@@ -153,9 +155,23 @@ def test_transfer_budget_exceeds_candidate_count_leaves_remainder_as_placeholder
     assert matched['図面個数'] == 1
     assert matched['ULKES個数'] == 1  # DXF個数(1)を上限に消費
 
-    leftover = df[df['符号'] == 'CNCB?'].iloc[0]
+    leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
     assert leftover['区分'] == 'ULKESのみ'
     assert leftover['ULKES個数'] == 2  # budget(3) - 消費(1)
+
+
+def test_transfer_leftover_uses_generic_prefix_when_multiple_dxf_symbols_share_it():
+    """DXF側に同プレフィックスの符号が2種類以上ある場合は、特定の1つに帰属
+    させられないため、従来通り`{prefix}?`に集約する。"""
+    dxf_counter = Counter({"CNCB001W": 1, "CNCB002X": 1})
+    ulkes_symbols = ["CNCB001W", "CNCB002X", "CNCB?001", "CNCB?002"]  # budget=2
+
+    result = compare_pair(dxf_counter, ulkes_symbols)
+    df = result['symbol_df']
+
+    leftover = df[df['符号'] == 'CNCB?'].iloc[0]
+    assert leftover['区分'] == 'ULKESのみ'
+    assert leftover['ULKES個数'] == 2
 
 
 def test_transfer_budget_less_than_dxf_count_leaves_yellow_mismatch():
@@ -194,7 +210,7 @@ def test_transfer_does_not_affect_already_matched_symbols():
     assert matched['区分'] == '両方'
     assert matched['ULKES個数'] == 1  # 元々の1個のまま（振替で加算されない）
 
-    leftover = df[df['符号'] == 'CNCB?'].iloc[0]
+    leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
     assert leftover['ULKES個数'] == 1
 
 
