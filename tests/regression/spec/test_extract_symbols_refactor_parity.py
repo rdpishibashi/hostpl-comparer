@@ -1,10 +1,16 @@
-"""extract_circuit_symbols() のリファクタ前後の同一性を保証する。
+"""extract_circuit_symbols() の実データでの回帰テスト（総数の凍結）。
 
-HostPL-extractor の model/extract_symbols.py から複製した本モジュールは、
-_find_assembly_blocks() / _process_rows() への分解と extract_all_assemblies()
-の追加を行っている。既存の公開関数 extract_circuit_symbols() の戻り値は
-一切変わっていないことを、HostPL-extractor の TECHNICAL.md に記録された
-実測値（対象行数・抽出記号数）でも確認する。
+当初は_find_assembly_blocks()/_process_rows()への分解（ラウンド1）の前後で
+挙動が変わっていないことを確認するテストだったが、その後のユーザー要求
+（符号/構成コメントの個数比較選択、構成数超過補完を機器符号ごとに独立して
+適用する方式への変更等）で総数自体が意図的に変わっている。現在はそれらの
+変更を反映した実測値を凍結する回帰テストとして機能する。値が変わったら
+意図した変更か確認してから更新すること。
+
+2026-09-09の変更（構成数を機器符号ごとに独立して適用）で、「_」等で複数の
+機器符号に分解される行の構成数が大きい場合、抽出数が大きく増える
+（例: EE6661-000-05Aの"CNFAN01-08"×4行、構成数8+8+24+24=64が8個の機器符号
+それぞれに独立して適用され、121→853に増加。ユーザー確認済み・意図した挙動）。
 """
 import os
 
@@ -16,11 +22,10 @@ from model.extract_symbols import extract_circuit_symbols
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
 
 # (ファイル名, アセンブリ番号, 期待する対象行数, 期待する抽出記号数)
-# HostPL-extractor/TECHNICAL.md「実データでの確認結果」節の実測値
 CASES = [
-    ("EE6312-000-01A.xlsx", "EE6312-000-01A", 26, 48),
-    ("EE6313-000-01C.xlsx", "EE6313-000-01C", 26, 48),
-    ("EE6661-000-05A.xlsx", "EE6661-000-05A", 17, 121),
+    ("EE6312-000-01A.xlsx", "EE6312-000-01A", 26, 62),
+    ("EE6313-000-01C.xlsx", "EE6313-000-01C", 26, 62),
+    ("EE6661-000-05A.xlsx", "EE6661-000-05A", 17, 853),
 ]
 
 

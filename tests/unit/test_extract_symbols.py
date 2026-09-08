@@ -97,17 +97,18 @@ def test_extract_circuit_symbols_returns_empty_when_assembly_not_found():
     assert row_count == 0
 
 
-def test_shortfall_and_excess_completion_unchanged():
-    """構成数との過不足補完ロジック（?ddd補完・末尾?マーク）が従来通り動作する。"""
+def test_shortfall_and_excess_completion():
+    """構成数との過不足補完ロジック。不足分は機器符号自身の名前で補完し
+    （2026-09-09、ユーザー指定）、超過分は従来通り末尾に?マークを付ける。"""
     df = _df([
         ("EE0001-000-01A", None, None, None),
-        (None, "CNCB001W", None, 3),   # 不足: 1個→3個
+        (None, "CNCB001W", None, 3),   # 不足: 1個→3個(CNCB001W自身の名前で2個補完)
         (None, "R1_R2_R3", None, 2),   # 超過: 3個→2個
     ])
 
     symbols, row_count = extract_circuit_symbols(df, "EE0001-000-01A")
 
-    assert symbols == ["CNCB001W", "CNCB?001", "CNCB?002", "R1", "R2?"]
+    assert symbols == ["CNCB001W", "CNCB001W?001", "CNCB001W?002", "R1", "R2?"]
     assert row_count == 2
 
 
@@ -189,8 +190,12 @@ def test_duplicate_rows_are_merged_and_quantities_summed():
 
     symbols, row_count = extract_circuit_symbols(df, "EE0001-000-01A")
 
-    # 合算後の構成数は7、機器符号は1個(CNCB001W)なので不足6個を補完する
-    assert symbols == ["CNCB001W", "CNCB?001", "CNCB?002", "CNCB?003", "CNCB?004", "CNCB?005", "CNCB?006"]
+    # 合算後の構成数は7、機器符号は1個(CNCB001W)なので不足6個をCNCB001W自身の
+    # 名前で補完する（2026-09-09、ユーザー指定）
+    assert symbols == [
+        "CNCB001W", "CNCB001W?001", "CNCB001W?002", "CNCB001W?003",
+        "CNCB001W?004", "CNCB001W?005", "CNCB001W?006",
+    ]
     assert row_count == 4  # 対象行数は生の行数のまま(合算してもここは変えない)
 
 
@@ -219,6 +224,6 @@ def test_duplicate_rows_preserve_first_occurrence_order():
 
     symbols, row_count = extract_circuit_symbols(df, "EE0001-000-01A")
 
-    # R1は構成数合算2だが機器符号1個→不足1個を補完。C1はそのまま
-    assert symbols == ["R1", "R?001", "C1"]
+    # R1は構成数合算2だが機器符号1個→不足1個をR1自身の名前で補完。C1はそのまま
+    assert symbols == ["R1", "R1?001", "C1"]
     assert row_count == 3

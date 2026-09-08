@@ -206,37 +206,33 @@ def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
 def _transfer_prefix_completions(
     dxf_counter: Counter, ulkes_symbol_counter: Counter, ulkes_prefix_counter: Counter,
 ) -> None:
-    """構成数超過補完（`{prefix}?{ddd}`）の個数を、DXF側で「図面のみ」となっている
-    同プレフィックスの符号へABC順に割り当てる（2026-09-08、要求9）。
+    """構成数超過補完（`{機器符号}?{ddd}`）の個数を、DXF側で「図面のみ」となっている
+    同じ英字プレフィックスの符号へABC順に割り当てる（2026-09-08、要求9）。
 
-    `ulkes_symbol_counter` を直接更新する（in-place）。各プレフィックスの割り当て
-    可能数（`ulkes_prefix_counter[prefix]`）を、そのプレフィックスに一致し
+    `ulkes_symbol_counter` を直接更新する（in-place）。`ulkes_prefix_counter` は
+    2026-09-09の変更で「補完元の具体的な機器符号名」ごとに個数を持つ
+    （例: `CNUPS01BA`・`CNUPS1`・`CNUPSBA` はいずれも英字プレフィックス
+    `CNUPS`/`CNUPSBA`を共有しうるが、`_process_rows()`が機器符号ごとに独立して
+    補完を生成するため、ここでは別々の集計として扱われる——プレフィックスだけで
+    束ねてしまうと、由来の異なる複数行の不足分が1つに混ざって帰属先が
+    分からなくなるため）。
+
+    各補完元の符号（`source_symbol`）について、その英字プレフィックスが一致し
     まだULKES側に無い（＝図面のみ）DXF側符号へABC順に、DXF個数を上限として
-    割り当てる。
-
-    割り当てきれず余った分は1行に集約し「ULKESのみ」として残す
-    （2026-09-09、ユーザー指摘: `CNCB?`のような抽象化されたプレフィックス表示は
-    分かりにくい）。DXF側にそのプレフィックスに一致する符号が**ちょうど1種類**
-    存在する場合は、その符号名に`?`を付けた行名にする（例: `CNCB001W?`）
-    ——「CNCB001Wの完全一致1個とは別に、残り6個は同じCNCB001Wの一部と
-    考えられる」ことが一目で分かる。末尾`?`を付けるのは、完全一致した
-    `CNCB001W`行と符号名が衝突して合算されてしまうのを避けるため（別の意味
-    ——超過分の末尾`?`——と混同しないよう、この`?`はここでのみ使う表示上の
-    印であり、`classify_ulkes_symbol()`で再解釈されることはない）。
-    DXF側に同プレフィックスの符号が0種類、または2種類以上ある場合は
-    （特定の1つに帰属させられないため）従来通り`"{prefix}?"`に集約する。
+    割り当てる。割り当てきれず余った分は`"{source_symbol}?"`として1行にまとめ、
+    「ULKESのみ」として残す（末尾`?`は完全一致した同名符号の行と符号名が衝突して
+    合算されるのを避けるための表示上の印であり、`classify_ulkes_symbol()`で
+    再解釈されることはない）。
     """
-    for prefix in sorted(ulkes_prefix_counter):
-        budget = ulkes_prefix_counter[prefix]
+    for source_symbol in sorted(ulkes_prefix_counter):
+        budget = ulkes_prefix_counter[source_symbol]
         if budget <= 0:
             continue
 
-        prefix_matched_dxf_symbols = {
-            sym for sym in dxf_counter if extract_alphabetic_part(sym) == prefix
-        }
+        fuzzy_prefix = extract_alphabetic_part(source_symbol)
         candidates = sorted(
-            sym for sym in prefix_matched_dxf_symbols
-            if ulkes_symbol_counter.get(sym, 0) == 0
+            sym for sym in dxf_counter
+            if extract_alphabetic_part(sym) == fuzzy_prefix and ulkes_symbol_counter.get(sym, 0) == 0
         )
         for sym in candidates:
             if budget <= 0:
@@ -246,10 +242,7 @@ def _transfer_prefix_completions(
             budget -= assign
 
         if budget > 0:
-            if len(prefix_matched_dxf_symbols) == 1:
-                key = f'{next(iter(prefix_matched_dxf_symbols))}?'
-            else:
-                key = f'{prefix}?'
+            key = f'{source_symbol}?'
             ulkes_symbol_counter[key] = ulkes_symbol_counter.get(key, 0) + budget
 
 

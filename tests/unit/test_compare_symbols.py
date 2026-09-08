@@ -6,6 +6,8 @@
 """
 from collections import Counter
 
+import pandas as pd
+
 from model.compare_symbols import (
     comparison_key,
     compare_pair,
@@ -13,6 +15,20 @@ from model.compare_symbols import (
     rescue_by_ulkes_prefix,
     ulkes_prefix_set,
 )
+from model.extract_symbols import extract_circuit_symbols
+
+
+def _ulkes_symbols_for_row(symbol, comment, qty):
+    """1行分のULKESパーツリストから展開済み機器符号リストを作る
+    （extract_circuit_symbols()経由。補完マーカーを手書きで組み立てると
+    実際の生成ロジック——機器符号ごとに独立した完全な符号名で補完する、
+    2026-09-09の変更——と食い違う非現実的な入力になるため）。"""
+    df = pd.DataFrame(
+        [("EE0001-000-01A", None, None, None), (None, symbol, comment, qty)],
+        columns=["図面番号", "符号", "構成コメント", "構成数"],
+    )
+    symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+    return symbols
 
 
 # --- comparison_key（要求10の前提。組み合わせ表#1） ---
@@ -108,77 +124,77 @@ def test_compare_pair_without_rejected_counter_no_rescue():
 
 
 # --- _transfer_prefix_completions（要求9、compare_pair経由。組み合わせ表#4〜#7） ---
+#
+# 2026-09-09の変更で、構成数不足の補完は機器符号ごとに独立して、その機器符号
+# 自身の完全な名前で生成されるようになった（例: "CNCB001W"・構成数3 →
+# ["CNCB001W","CNCB001W?001","CNCB001W?002"]）。以下のテストは
+# `_ulkes_symbols_for_row()` で実際の生成ロジックを経由した現実的な入力を使う。
 
-def test_transfer_promotes_dxf_only_symbol_when_budget_matches():
-    """組み合わせ表#4: 補完あり・振替先ありで「両方」に昇格し、個数が消費される。"""
-    dxf_counter = Counter({"CNCB001W": 1})
-    ulkes_symbols = ["CNCB?001"]  # 構成数不足の補完1件
-
-    result = compare_pair(dxf_counter, ulkes_symbols)
-    df = result['symbol_df']
-    assert len(df) == 1
-    row = df.iloc[0]
-    assert row['符号'] == 'CNCB001W'
-    assert row['区分'] == '両方'
-    assert row['図面個数'] == 1
-    assert row['ULKES個数'] == 1
-
-
-def test_transfer_leftover_collapses_into_prefix_placeholder_row():
-    """組み合わせ表#5: 補完はあるが振替先（DXF側「図面のみ」同プレフィックス）が
-    無ければ、`{prefix}?` の集約行がULKESのみとして残る。"""
-    dxf_counter = Counter()  # DXF側に CNCB系の符号が無い
-    ulkes_symbols = ["CNCB?001", "CNCB?002"]
-
-    result = compare_pair(dxf_counter, ulkes_symbols)
-    df = result['symbol_df']
-    assert len(df) == 1
-    row = df.iloc[0]
-    assert row['符号'] == 'CNCB?'
-    assert row['区分'] == 'ULKESのみ'
-    assert row['ULKES個数'] == 2
-
-
-def test_transfer_budget_exceeds_candidate_count_leaves_remainder_as_placeholder():
-    """組み合わせ表#6: budgetが振替先の図面個数を上回る場合、DXF個数分だけ消費し
-    残りは1行に集約される。DXF側にそのプレフィックスの符号が1種類だけ
-    （CNCB001W）なので、その符号名+『?』にする（2026-09-09、ユーザー指定。
-    抽象的な`{prefix}?`より分かりやすくするため）。"""
-    dxf_counter = Counter({"CNCB001W": 1})
-    ulkes_symbols = ["CNCB?001", "CNCB?002", "CNCB?003"]  # budget=3
+def test_transfer_promotes_different_dxf_symbol_sharing_prefix():
+    """組み合わせ表#4: 構成数不足の補完が、DXF側で「図面のみ」となっている
+    別の同プレフィックス符号に割り当てられ「両方」に昇格する。補完元自身
+    （CNCB001W）は基本出現1個で既にDXFと一致済みのため、完全に消費されれば
+    余り行は残らない。"""
+    ulkes_symbols = _ulkes_symbols_for_row("CNCB001W", None, 2)  # ["CNCB001W","CNCB001W?001"]
+    dxf_counter = Counter({"CNCB001W": 1, "CNCB002X": 1})
 
     result = compare_pair(dxf_counter, ulkes_symbols)
     df = result['symbol_df']
 
     matched = df[df['符号'] == 'CNCB001W'].iloc[0]
     assert matched['区分'] == '両方'
-    assert matched['図面個数'] == 1
-    assert matched['ULKES個数'] == 1  # DXF個数(1)を上限に消費
+    assert matched['ULKES個数'] == 1
+
+    promoted = df[df['符号'] == 'CNCB002X'].iloc[0]
+    assert promoted['区分'] == '両方'
+    assert promoted['図面個数'] == 1
+    assert promoted['ULKES個数'] == 1
+    assert not (df['符号'] == 'CNCB001W?').any()  # 完全に消費されたので余りは残らない
+
+
+def test_transfer_leftover_uses_source_symbol_name_when_no_dxf_candidate():
+    """組み合わせ表#5: 振替先となる別のDXF符号が無ければ、補完元の機器符号名+
+    『?』の1行がULKESのみとして残る。"""
+    ulkes_symbols = _ulkes_symbols_for_row("CNCB001W", None, 3)  # base1 + 補完2個
+    dxf_counter = Counter({"CNCB001W": 1})  # 同プレフィックスの他の符号は無い
+
+    result = compare_pair(dxf_counter, ulkes_symbols)
+    df = result['symbol_df']
+
+    matched = df[df['符号'] == 'CNCB001W'].iloc[0]
+    assert matched['区分'] == '両方'
+    assert matched['ULKES個数'] == 1
+
+    leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
+    assert leftover['区分'] == 'ULKESのみ'
+    assert leftover['ULKES個数'] == 2
+
+
+def test_transfer_budget_exceeds_candidate_count_leaves_remainder():
+    """組み合わせ表#6: 振替先のDXF個数を上回るbudgetは、DXF個数分だけ消費し
+    残りは補完元の機器符号名+『?』に集約される。"""
+    ulkes_symbols = _ulkes_symbols_for_row("CNCB001W", None, 4)  # base1 + 補完3個
+    dxf_counter = Counter({"CNCB001W": 1, "CNCB002X": 1})
+
+    result = compare_pair(dxf_counter, ulkes_symbols)
+    df = result['symbol_df']
+
+    promoted = df[df['符号'] == 'CNCB002X'].iloc[0]
+    assert promoted['区分'] == '両方'
+    assert promoted['図面個数'] == 1
+    assert promoted['ULKES個数'] == 1  # DXF個数(1)を上限に消費
 
     leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
     assert leftover['区分'] == 'ULKESのみ'
     assert leftover['ULKES個数'] == 2  # budget(3) - 消費(1)
 
 
-def test_transfer_leftover_uses_generic_prefix_when_multiple_dxf_symbols_share_it():
-    """DXF側に同プレフィックスの符号が2種類以上ある場合は、特定の1つに帰属
-    させられないため、従来通り`{prefix}?`に集約する。"""
-    dxf_counter = Counter({"CNCB001W": 1, "CNCB002X": 1})
-    ulkes_symbols = ["CNCB001W", "CNCB002X", "CNCB?001", "CNCB?002"]  # budget=2
-
-    result = compare_pair(dxf_counter, ulkes_symbols)
-    df = result['symbol_df']
-
-    leftover = df[df['符号'] == 'CNCB?'].iloc[0]
-    assert leftover['区分'] == 'ULKESのみ'
-    assert leftover['ULKES個数'] == 2
-
-
 def test_transfer_budget_less_than_dxf_count_leaves_yellow_mismatch():
     """組み合わせ表#7: budgetが振替先の図面個数を下回る場合、ULKES個数はbudget分
-    のみとなり個数不一致（黄）になる。"""
-    dxf_counter = Counter({"CNCB001W": 3})
-    ulkes_symbols = ["CNCB?001"]  # budget=1
+    のみとなり個数不一致（黄）になる。補完元（CNCB999Z）自身はDXFに存在しない
+    ため、その1個は「図面のみ」ではなく振替の起点にしか使わない。"""
+    ulkes_symbols = _ulkes_symbols_for_row("CNCB999Z", None, 2)  # base1 + 補完1個
+    dxf_counter = Counter({"CNCB001W": 3})  # 同プレフィックスの別符号、DXF個数3
 
     result = compare_pair(dxf_counter, ulkes_symbols)
     df = result['symbol_df']
@@ -190,8 +206,8 @@ def test_transfer_budget_less_than_dxf_count_leaves_yellow_mismatch():
 
 def test_transfer_assigns_candidates_in_abc_order():
     """同一プレフィックスの候補が複数ある場合、ABC順に割り当てる。"""
-    dxf_counter = Counter({"CNCB005": 1, "CNCB001": 1})
-    ulkes_symbols = ["CNCB?001"]  # budget=1 → ABC順で先頭のCNCB001が優先されるはず
+    ulkes_symbols = _ulkes_symbols_for_row("CNCB999Z", None, 2)  # base1 + 補完1個
+    dxf_counter = Counter({"CNCB005": 1, "CNCB001": 1})  # いずれも未対応(図面のみ)
 
     result = compare_pair(dxf_counter, ulkes_symbols)
     df = result['symbol_df']
@@ -199,18 +215,24 @@ def test_transfer_assigns_candidates_in_abc_order():
     assert df[df['符号'] == 'CNCB005'].iloc[0]['区分'] == '図面のみ'
 
 
-def test_transfer_does_not_affect_already_matched_symbols():
-    """既にULKES側に存在する（＝図面のみではない）DXF符号は振替対象にならない。"""
-    dxf_counter = Counter({"CNCB001W": 1})
-    ulkes_symbols = ["CNCB001W", "CNCB?001"]  # CNCB001Wは既に両方一致、budget=1は他へ
+def test_transfer_does_not_reassign_budget_to_already_matched_symbol():
+    """既にDXF側と一致している機器符号（CNCB001W）は、別の機器符号
+    （CNCB999Z）由来の補完budgetの受け皿にはならない（`candidates`が
+    `ulkes_symbol_counter.get(sym,0)==0`で除外することの確認）。"""
+    ulkes_symbols = (
+        _ulkes_symbols_for_row("CNCB001W", None, 1)  # ["CNCB001W"]（完全一致、補完なし）
+        + _ulkes_symbols_for_row("CNCB999Z", None, 2)  # ["CNCB999Z","CNCB999Z?001"]
+    )
+    dxf_counter = Counter({"CNCB001W": 1})  # CNCB999Zの補完を受け取れる他のCNCB符号は無い
 
     result = compare_pair(dxf_counter, ulkes_symbols)
     df = result['symbol_df']
     matched = df[df['符号'] == 'CNCB001W'].iloc[0]
     assert matched['区分'] == '両方'
-    assert matched['ULKES個数'] == 1  # 元々の1個のまま（振替で加算されない）
+    assert matched['ULKES個数'] == 1  # 元々の1個のまま（横取りされない）
 
-    leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
+    leftover = df[df['符号'] == 'CNCB999Z?'].iloc[0]
+    assert leftover['区分'] == 'ULKESのみ'
     assert leftover['ULKES個数'] == 1
 
 

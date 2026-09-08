@@ -163,15 +163,23 @@ def _process_rows(df, row_indices):
 
         # 回路記号の個数と構成数を比較
         if symbol_count < qty:
-            # 最後の回路記号のアルファベット部分を取得
-            last_alpha = ""
             if base_symbols:
-                last_alpha = extract_alphabetic_part(base_symbols[-1])
-
-            # 不足分は"rrrrr?ddd"で補完
-            # rrrrrはアルファベット部分、dddは行ごとに001からのシーケンス番号
-            for i in range(qty - symbol_count):
-                final_symbols.append(f"{last_alpha}?{i+1:03d}")
+                # 「_」等で分解された機器符号それぞれが、この行の構成数分だけ
+                # 独立して必要と解釈する（2026-09-09、ユーザー指定）。各機器符号は
+                # 既に1個確定しているため、不足分は機器符号ごとに(qty-1)個ずつ、
+                # その機器符号自身の名前で補完する
+                # （例: "CNUPS01BA_CNUPSBA"・構成数10 →
+                #  CNUPS01BA?001〜009、CNUPSBA?001〜009 をそれぞれ生成。
+                #  単一機器符号の行（例: "CNCB001W"・構成数7）でも同じ規則が
+                #  適用され、CNCB001W?001〜006 を生成する）
+                for symbol in base_symbols:
+                    for i in range(qty - 1):
+                        final_symbols.append(f"{symbol}?{i+1:03d}")
+            else:
+                # 符号・構成コメントともに空で機器符号が1つも取得できない行。
+                # 帰属先が無いため、空文字列プレフィックスで補完する
+                for i in range(qty - symbol_count):
+                    final_symbols.append(f"?{i+1:03d}")
         elif symbol_count > qty:
             # 超過分は最後から?をつける
             final_symbols = final_symbols[:qty]
