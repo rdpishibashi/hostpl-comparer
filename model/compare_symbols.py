@@ -73,16 +73,24 @@ def normalize_label(s: str) -> str:
     return ''.join(out)
 
 
+_WHITESPACE_PATTERN = re.compile(r'\s+')
+
+
 def comparison_key(label: str) -> str:
-    """比較用のキーを返す（全角→半角 → 括弧より前 → 前後空白除去）。
+    """比較用のキーを返す（全角→半角 → 括弧より前 → 空白を全て除去）。
 
     DXF側・ULKES側どちらの生ラベルにも適用する。プレビュー・テキスト出力には
     使わない（原文のまま表示する。括弧内の仕様情報を確認できるように残すため）。
+
+    空白は前後だけでなく**内部も含めて全て除去**する（2026-09-08、ユーザー指定）。
+    DXFの手書き回路図では見栄えのための改行が、MTEXT展開時に半角スペースへ
+    変換されて残ることがある（例: "MC\\n001" → "MC 001"）。機器符号として
+    正当なラベルに空白が含まれることはないため、除去して問題ない。
     """
     normalized = normalize_label(str(label))
     idx = normalized.find('(')
     core = normalized[:idx] if idx >= 0 else normalized
-    return core.strip()
+    return _WHITESPACE_PATTERN.sub('', core)
 
 
 def classify_ulkes_symbol(symbol: str) -> tuple:

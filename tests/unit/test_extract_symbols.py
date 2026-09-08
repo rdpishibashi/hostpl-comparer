@@ -172,3 +172,53 @@ def test_field_selection_symbol_range_with_invalid_order_is_not_expanded():
     symbols, _row_count = extract_circuit_symbols(df, "EE0001-000-01A")
 
     assert symbols == ["CNFAN08-01"]
+
+
+# --- 符号+構成コメントが完全に同じ行の合算（2026-09-09、ユーザー指定） ---
+
+def test_duplicate_rows_are_merged_and_quantities_summed():
+    """符号・構成コメントが両方とも完全に同じ行は1行として扱い、構成数を合算する。
+    実データのCNCB001W×4行（構成数1,1,3,2）で確認した回帰。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "CNCB001W", None, 1),
+        (None, "CNCB001W", None, 1),
+        (None, "CNCB001W", None, 3),
+        (None, "CNCB001W", None, 2),
+    ])
+
+    symbols, row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    # 合算後の構成数は7、機器符号は1個(CNCB001W)なので不足6個を補完する
+    assert symbols == ["CNCB001W", "CNCB?001", "CNCB?002", "CNCB?003", "CNCB?004", "CNCB?005", "CNCB?006"]
+    assert row_count == 4  # 対象行数は生の行数のまま(合算してもここは変えない)
+
+
+def test_rows_with_same_symbol_but_different_comment_are_not_merged():
+    """符号が同じでも構成コメントが異なれば別行のまま扱う。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "CNCB001W", "CNCB001W_CNCB002W", 2),
+        (None, "CNCB001W", None, 1),
+    ])
+
+    symbols, row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    assert symbols == ["CNCB001W", "CNCB002W", "CNCB001W"]
+    assert row_count == 2
+
+
+def test_duplicate_rows_preserve_first_occurrence_order():
+    """合算後のグループは最初に出現した順序を維持する。"""
+    df = _df([
+        ("EE0001-000-01A", None, None, None),
+        (None, "R1", None, 1),
+        (None, "C1", None, 1),
+        (None, "R1", None, 1),  # R1の2件目(合算対象)。出現順はR1が先のまま
+    ])
+
+    symbols, row_count = extract_circuit_symbols(df, "EE0001-000-01A")
+
+    # R1は構成数合算2だが機器符号1個→不足1個を補完。C1はそのまま
+    assert symbols == ["R1", "R?001", "C1"]
+    assert row_count == 3

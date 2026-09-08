@@ -89,8 +89,44 @@ def _find_assembly_blocks(df):
     return blocks
 
 
+def _group_duplicate_rows(df, row_indices):
+    """「符号」と「構成コメント」が両方とも完全に同じ行をまとめ、構成数を合算する
+    （2026-09-08、ユーザー指定）。ULKESパーツリストには、同一部品が構成数を分けて
+    複数行に手入力されているケースがある（実データのCNCB001W×4行、
+    構成数1+1+3+2など）。まとめずに1行ずつ過不足補完すると、同じ機器符号の
+    出現数が実際のDXF側の出現数（多くは1）より過大になり、本来一致するはずの
+    比較が不一致になる。まとめた上で構成数を合算し、1回だけ過不足補完すること
+    でこれを解消する。
+
+    最初に出現した行の順序を維持する（構成数以外は最初の行の値をそのまま使う）。
+
+    Returns:
+        list[tuple[str, str, int]]: [(符号, 構成コメント, 合算した構成数), ...]
+    """
+    groups = []  # [[符号, 構成コメント, 合算構成数], ...]（出現順）
+    index_by_key = {}
+
+    for idx in row_indices:
+        row = df.iloc[idx]
+        symbol_field = str(row["符号"]) if pd.notna(row["符号"]) else ""
+        comment_field = str(row["構成コメント"]) if pd.notna(row["構成コメント"]) else ""
+        qty = int(row["構成数"]) if pd.notna(row["構成数"]) else 0
+
+        key = (symbol_field, comment_field)
+        if key in index_by_key:
+            groups[index_by_key[key]][2] += qty
+        else:
+            index_by_key[key] = len(groups)
+            groups.append([symbol_field, comment_field, qty])
+
+    return [tuple(g) for g in groups]
+
+
 def _process_rows(df, row_indices):
     """指定した行インデックス群から回路記号リストを構築する。
+
+    「符号」と「構成コメント」が両方とも完全に同じ行は1行として扱う
+    （`_group_duplicate_rows()`。構成数は合算する）。
 
     「符号」と「構成コメント」は手入力のため表記が食い違うことがあり、
     どちらか機器符号の**個数が多い方**を採用する（2026-09-08、ユーザー指定。
@@ -101,16 +137,12 @@ def _process_rows(df, row_indices):
     （"_"分割、または「符号」列の範囲表記"SSR01-08"の展開）。
 
     構成数との過不足補完（不足分は末尾に"{アルファベット部分}?{3桁連番}"を追加、
-    超過分は先頭からqty件に切り詰めた上で末尾から"?"を追記）は1行ずつ適用する。
+    超過分は先頭からqty件に切り詰めた上で末尾から"?"を追記）はグループごとに
+    1回ずつ適用する。
     """
     circuit_symbols = []
 
-    for idx in row_indices:
-        row = df.iloc[idx]
-
-        symbol_field = str(row["符号"]) if pd.notna(row["符号"]) else ""
-        comment_field = str(row["構成コメント"]) if pd.notna(row["構成コメント"]) else ""
-
+    for symbol_field, comment_field, qty in _group_duplicate_rows(df, row_indices):
         symbol_candidates = _expand_symbol_field(symbol_field)
         # 構成コメントは「_」区切りまたは範囲表記の場合のみ機器符号リストとして
         # 扱う。単なる自由記述メモ（区切りなし）は機器符号として採用しない。
@@ -122,9 +154,6 @@ def _process_rows(df, row_indices):
             comment_candidates if comment_candidates and len(comment_candidates) >= len(symbol_candidates)
             else symbol_candidates
         )
-
-        # 数値型の場合は整数に変換する
-        qty = int(row["構成数"]) if pd.notna(row["構成数"]) else 0
 
         # 回路記号の個数を取得
         symbol_count = len(base_symbols)

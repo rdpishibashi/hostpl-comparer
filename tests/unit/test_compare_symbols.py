@@ -33,6 +33,17 @@ def test_comparison_key_no_parenthesis_is_unchanged_but_stripped():
     assert comparison_key("  R10  ") == "R10"
 
 
+def test_comparison_key_removes_internal_whitespace():
+    """DXFの手書き回路図では見栄えのための改行がMTEXT展開時に半角スペースへ
+    変換されて残ることがある（例: "MC\\n001" → "MC 001"）。実データで確認
+    （2026-09-09、ユーザー報告: MC 001とMC001は同じ機器符号として扱うべき）。"""
+    assert comparison_key("MC 001") == "MC001"
+
+
+def test_comparison_key_removes_multiple_internal_whitespace_and_tabs():
+    assert comparison_key("MC  001\t002") == "MC001002"
+
+
 # --- ulkes_prefix_set / rescue_by_ulkes_prefix（組み合わせ表#2・#3・#10） ---
 
 def test_ulkes_prefix_set_from_plain_symbols():

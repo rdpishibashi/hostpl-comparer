@@ -61,10 +61,11 @@ def test_end_to_end_pipeline_with_real_ee6312_data():
     pair_data = per_pair["EE6312-000-01A"]
     symbol_df = pair_data["symbol_df"]
 
-    # 区分ごとの件数（比較キーによる括弧除去・ULKESプレフィックス救済・構成数超過補完の
-    # 振替を反映した実測値。詳細はセッションの引き継ぎ書「実データで確認した事実」参照）
+    # 区分ごとの件数（比較キーによる括弧・空白除去、ULKESプレフィックス救済、
+    # 構成数超過補完の振替、符号+構成コメントが同一の行の合算を反映した実測値。
+    # 詳細はセッションの引き継ぎ書「実データで確認した事実」参照）
     kubun_counts = symbol_df["区分"].value_counts().to_dict()
-    assert kubun_counts == {"図面のみ": 38, "両方": 16, "ULKESのみ": 4}
+    assert kubun_counts == {"図面のみ": 37, "両方": 17, "ULKESのみ": 6}
 
     # ABC順（符号昇順）ソートの確認
     labels = symbol_df["符号"].tolist()
