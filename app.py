@@ -38,6 +38,26 @@ def is_excel_file(filename: str) -> bool:
     return base.lower().endswith(".xlsx")
 
 
+def dedupe_by_filename(files):
+    """同名ファイルが複数選択された場合、最初の1件だけを採用する
+    （同じファイルをDXF側・ULKES側でそれぞれ複数回選択してしまった場合の対策）。
+
+    Returns:
+        tuple[list, int]: (ユニークなファイルのリスト（アップロード順を維持）、
+            重複として除外した件数)
+    """
+    seen = set()
+    unique = []
+    duplicate_count = 0
+    for f in files:
+        if f.name in seen:
+            duplicate_count += 1
+            continue
+        seen.add(f.name)
+        unique.append(f)
+    return unique, duplicate_count
+
+
 def _symbols_to_text(symbols) -> str:
     return "".join(f"{s}\n" for s in symbols)
 
@@ -294,6 +314,19 @@ def main():
         st.caption(f"{dxf_skipped}件の`.dxf`以外のファイルは無視しました。")
     if pl_skipped:
         st.caption(f"{pl_skipped}件の`.xlsx`以外のファイルは無視しました。")
+
+    dxf_targets, dxf_duplicate_count = dedupe_by_filename(dxf_targets)
+    pl_targets, pl_duplicate_count = dedupe_by_filename(pl_targets)
+    if dxf_duplicate_count:
+        st.caption(
+            f"同名のDXFファイルが{dxf_duplicate_count}件重複していたため、"
+            "それぞれ最初の1件のみを採用しました。"
+        )
+    if pl_duplicate_count:
+        st.caption(
+            f"同名のULKES Excelファイルが{pl_duplicate_count}件重複していたため、"
+            "それぞれ最初の1件のみを採用しました。"
+        )
 
     if not dxf_targets and not pl_targets:
         st.info("DXFファイルまたはULKES PLファイルをアップロードしてください。")
