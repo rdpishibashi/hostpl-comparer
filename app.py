@@ -114,6 +114,25 @@ def _render_symbol_list(symbols, download_filename, key):
     )
 
 
+def _filter_no_expansion(no_expansion_by_file, ulkes_map):
+    """「部品展開なし」一覧から、実際には別のファイルで部品展開済みの図番を除く。
+
+    ある図番が(a)あるファイルでは部品展開されて実際の機器符号リストを持ち、
+    (b)別のファイルでは単なる参照行（部品展開なし）として現れる、という
+    ケースが実データにある（例: EE6661-000-05Aは自身のファイルで展開されるが、
+    EE6313-000-01Cのファイルには参照行としても現れる）。この場合、部品展開が
+    「無い」という表示は誤解を招くため、そのファイルの一覧からは除く
+    （2026-09-08、ユーザー指摘: 内容が同じで冗長）。あるファイルの一覧が
+    空になった場合はそのファイル自体を結果から除く。
+    """
+    filtered = []
+    for filename, drawing_numbers in no_expansion_by_file:
+        remaining = [dn for dn in drawing_numbers if dn not in ulkes_map]
+        if remaining:
+            filtered.append((filename, remaining))
+    return filtered
+
+
 def _run_comparison(dxf_files, pl_files):
     """アップロードされたDXF・ULKES PLファイルを処理し、比較結果をsession_stateに格納する。"""
     dxf_per_file = []
@@ -156,6 +175,8 @@ def _run_comparison(dxf_files, pl_files):
 
     ulkes_map, cross_file_warnings = build_ulkes_symbol_map(ulkes_entries)
     pl_warnings.extend(cross_file_warnings)
+
+    no_expansion_by_file = _filter_no_expansion(no_expansion_by_file, ulkes_map)
 
     pairs, dxf_only, ulkes_only = pair_by_drawing_number(dxf_map, ulkes_map)
 
