@@ -3,7 +3,7 @@ import io
 
 import pandas as pd
 
-from model.compare_symbols import DIFF_COLUMNS, PREFIX_COLUMNS, ROW_STYLE_COLORS, row_style
+from model.compare_symbols import DIFF_COLUMNS, ROW_STYLE_COLORS, row_style
 
 
 def _unique_sheet_name(name: str, used: set) -> str:
@@ -29,7 +29,7 @@ def _write_count_cell(ws, row, col, value, fmt):
         ws.write_blank(row, col, None, fmt)
 
 
-def _write_pair_sheet(writer, sheet_name, symbol_df, prefix_df, header_fmt, style_formats):
+def _write_pair_sheet(writer, sheet_name, symbol_df, header_fmt, style_formats):
     workbook = writer.book
     workbook.add_worksheet(sheet_name)
     ws = writer.sheets[sheet_name]
@@ -46,33 +46,21 @@ def _write_pair_sheet(writer, sheet_name, symbol_df, prefix_df, header_fmt, styl
         _write_count_cell(ws, row_idx, 3, b_val, fmt)
         row_idx += 1
 
-    if len(prefix_df) > 0:
-        row_idx += 1
-        ws.write(row_idx, 0, 'プレフィックス別集計（構成数超過補完分を含む）', header_fmt)
-        row_idx += 1
-        for col_idx, col_name in enumerate(PREFIX_COLUMNS):
-            ws.write(row_idx, col_idx, col_name, header_fmt)
-        row_idx += 1
-        for prefix, dxf_total, ulkes_total in prefix_df.itertuples(index=False):
-            style_key = 'MATCH' if dxf_total == ulkes_total else 'MISMATCH'
-            fmt = style_formats[style_key]
-            ws.write(row_idx, 0, prefix, fmt)
-            ws.write_number(row_idx, 1, int(dxf_total), fmt)
-            ws.write_number(row_idx, 2, int(ulkes_total), fmt)
-            row_idx += 1
-
     ws.set_column(0, 0, 25)
     ws.set_column(1, 3, 14)
 
 
 def _write_summary_sheet(writer, result, header_fmt, link_fmt):
+    no_expansion_by_file = result.get('no_expansion', [])
+    no_expansion_total = sum(len(drawing_numbers) for _filename, drawing_numbers in no_expansion_by_file)
+
     rows = [
         {'項目': '比較した図番ペア数', '値': len(result['pairs'])},
         {'項目': '図面のみの図番数', '値': len(result['dxf_only'])},
         {'項目': 'ULKESのみの図番数', '値': len(result['ulkes_only'])},
     ]
-    if result.get('no_expansion'):
-        rows.append({'項目': 'ULKESに図番はあるが部品展開なしの件数', '値': len(result['no_expansion'])})
+    if no_expansion_total:
+        rows.append({'項目': 'ULKESに図番はあるが部品展開なしの件数（延べ）', '値': no_expansion_total})
     if result.get('warnings'):
         rows.append({'項目': '警告件数', '値': len(result['warnings'])})
 
@@ -99,10 +87,24 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
             next_row += 1
         next_row += 1
 
+    def _write_no_expansion_section(title, by_file):
+        """ULKESファイルごとにグループ化した図番一覧を書く（重複排除はしない）。"""
+        nonlocal next_row
+        if not by_file:
+            return
+        ws.write(next_row, 0, title, header_fmt)
+        next_row += 1
+        for filename, drawing_numbers in by_file:
+            ws.write(next_row, 0, f'{filename}：')
+            next_row += 1
+            ws.write(next_row, 0, '、'.join(drawing_numbers))
+            next_row += 1
+        next_row += 1
+
     _write_section('比較した図番一覧（クリックでシートへ移動）', result['pairs'], as_link=True)
     _write_section('図面のみに存在する図番', result['dxf_only'])
     _write_section('ULKESのみに存在する図番', result['ulkes_only'])
-    _write_section('ULKESに図番はあるが部品展開なし', result.get('no_expansion', []))
+    _write_no_expansion_section('ULKESに図番はあるが部品展開なし', no_expansion_by_file)
     _write_section('警告', result.get('warnings', []))
 
     ws.set_column(0, 0, 55)
@@ -116,9 +118,12 @@ def create_comparison_excel_output(result: dict) -> bytes:
         'pairs': [図番, ...]（比較したペアの図番、昇順）,
         'dxf_only': [図番, ...],
         'ulkes_only': [図番, ...],
-        'no_expansion': [図番, ...]（省略可。ULKES側に図番はあるが部品展開行が
-            0件だったもの。比較対象からは除外し、サマリーシートに別掲する）,
-        'per_pair': {図番: {'symbol_df': DataFrame, 'prefix_df': DataFrame}},
+        'no_expansion': [(ULKESファイル名, [図番, ...]), ...]（省略可。ファイルの
+            処理順。ULKES側に図番はあるが部品展開行が0件だったもの。比較対象からは
+            除外し、サマリーシートにファイルごとにグループ化して別掲する。
+            同じ図番が複数ファイルに重複して現れてもよい（ファイル横断での
+            重複排除はしない））,
+        'per_pair': {図番: {'symbol_df': DataFrame}},
         'warnings': [str, ...],
     }
 
@@ -146,7 +151,7 @@ def create_comparison_excel_output(result: dict) -> bytes:
             pair_data = result['per_pair'][drawing_number]
             sheet_name = _unique_sheet_name(drawing_number, used_sheet_names)
             _write_pair_sheet(
-                writer, sheet_name, pair_data['symbol_df'], pair_data['prefix_df'],
+                writer, sheet_name, pair_data['symbol_df'],
                 header_fmt, style_formats,
             )
 

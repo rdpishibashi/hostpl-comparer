@@ -1,17 +1,26 @@
 """図面(DXF)側とULKES側の機器符号を、図番をキーに比較するコアロジック
 （Streamlit非依存の純関数）。
 
-ULKES側は `extract_symbols.extract_circuit_symbols()` が返す展開済み記号
-（`_` 分解済み、構成数との過不足補完済み）を使う。補完・超過で付与される
-`?` を含む記号は、以下のルールで比較に組み込む（HostPL-extractor/TECHNICAL.md
-の「不足分の記号形式」節に準拠、`?` の直後が3桁の数字かどうかで機械的に判別）:
+ULKES側は `extract_symbols.extract_circuit_symbols()`/`extract_all_assemblies()`
+が返す展開済み記号（`_` 分解済み、構成数との過不足補完済み）を使う。補完・超過で
+付与される `?` を含む記号は、以下のルールで比較に組み込む（HostPL-extractor/
+TECHNICAL.md の「不足分の記号形式」節に準拠、`?` の直後が3桁の数字かどうかで
+機械的に判別）:
 
 - 末尾 `?`（超過マーク。直後に3桁数字が続かない）: `?` を除去し、本体の
   符号として符号単位比較に使う（例: `CB018A?` → `CB018A`）。
 - `{prefix}?{ddd}`（構成数不足の補完。直後に3桁数字が続く）: 特定の符号には
-  帰属できないため、符号単位比較には使わず、`prefix` のアルファベット部分に
-  ひもづくプレフィックス単位の合計比較に使う（例: `CNCB?001` → プレフィックス
-  `CNCB` のULKES側合計に+1）。
+  帰属できないため、`_transfer_prefix_completions()` でDXF側の「図面のみ」
+  症候（同プレフィックス）へABC順に割り当てる（2026-09-08、要求9で導入。
+  旧仕様の独立したプレフィックス別集計表は廃止した）。割り当てきれず余った分は
+  `"{prefix}?"` の1行に集約し、符号単位比較表の中で「ULKESのみ」として残す。
+
+比較キー（`comparison_key()`）は DXF側・ULKES側の両方に適用する
+（全角→半角 → 括弧より前 → 前後空白除去）。DXF側には「機器符号 (仕様)」の
+ように括弧で仕様情報を付記した表記が実データに存在し（例: `CB004A (3A)`）、
+括弧を残したまま比較するとULKES側の `CB004A` と一致せず「ULKESのみ」の
+誤検出になるため（2026-09-08、実データ計測で確認: 誤検出10件→1件に改善）。
+プレビュー・テキスト出力には比較キーを使わず、原文のまま表示する。
 """
 import re
 from collections import Counter
@@ -21,7 +30,6 @@ import pandas as pd
 from model.extract_symbols import extract_alphabetic_part
 
 DIFF_COLUMNS = ['符号', '区分', '図面個数', 'ULKES個数']
-PREFIX_COLUMNS = ['プレフィックス', '図面合計', 'ULKES合計']
 
 KUBUN_BOTH = '両方'
 KUBUN_DXF_ONLY = '図面のみ'
@@ -65,6 +73,18 @@ def normalize_label(s: str) -> str:
     return ''.join(out)
 
 
+def comparison_key(label: str) -> str:
+    """比較用のキーを返す（全角→半角 → 括弧より前 → 前後空白除去）。
+
+    DXF側・ULKES側どちらの生ラベルにも適用する。プレビュー・テキスト出力には
+    使わない（原文のまま表示する。括弧内の仕様情報を確認できるように残すため）。
+    """
+    normalized = normalize_label(str(label))
+    idx = normalized.find('(')
+    core = normalized[:idx] if idx >= 0 else normalized
+    return core.strip()
+
+
 def classify_ulkes_symbol(symbol: str) -> tuple:
     """ULKES側の展開済み記号1件を分類する（正規化後の文字列を渡すこと）。
 
@@ -85,16 +105,30 @@ def classify_ulkes_symbol(symbol: str) -> tuple:
 
 def classify_symbols(symbols) -> tuple:
     """ULKES側の展開済み記号リスト（未正規化）を、符号単位Counterと
-    プレフィックス単位Counterに分ける。正規化はここで行う。"""
+    プレフィックス単位Counterに分ける。比較キーへの変換はここで行う。"""
     symbol_counter = Counter()
     prefix_counter = Counter()
     for raw in symbols:
-        kind, key = classify_ulkes_symbol(normalize_label(str(raw)))
+        kind, key = classify_ulkes_symbol(comparison_key(raw))
         if kind == 'symbol':
             symbol_counter[key] += 1
         else:
             prefix_counter[key] += 1
     return symbol_counter, prefix_counter
+
+
+def ulkes_prefix_set(symbols) -> set:
+    """ULKES側の展開済み記号リストから、比較キーの英字プレフィックス集合を返す
+    （空文字は除く）。DXF側の機器符号候補判定の救済（`rescue_by_ulkes_prefix()`）
+    に使う。構成数超過補完 `{prefix}?{ddd}` からもプレフィックスを拾う
+    （`extract_alphabetic_part()` は `?` の手前で止まるため、そのまま
+    プレフィックスが得られる）。"""
+    prefixes = set()
+    for raw in symbols:
+        prefix = extract_alphabetic_part(comparison_key(raw))
+        if prefix:
+            prefixes.add(prefix)
+    return prefixes
 
 
 def row_style(kubun: str, a_count, b_count) -> str:
@@ -139,57 +173,88 @@ def compare_symbols(dxf_counter: Counter, ulkes_symbol_counter: Counter) -> pd.D
     return df
 
 
-def compare_prefixes(
+def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
+    """DXF側で機器符号パターンに一致しなかったラベル（`rejected_counter`）のうち、
+    比較キーの英字プレフィックスがULKES側プレフィックス集合に含まれるものだけを
+    救済し、比較キーで集計したCounterとして返す（2026-09-08、要求10）。
+
+    プレフィックス集合はそのペアのULKES側記号だけから求める（他図番のプレフィックス
+    で誤って救済しないため）。DXFをアップロードしていてもULKESが無い図番では
+    プレフィックス集合が空になり、救済は起きない。
+    """
+    prefixes = ulkes_prefix_set(ulkes_symbols)
+    rescued = Counter()
+    for label, count in rejected_counter.items():
+        key = comparison_key(label)
+        prefix = extract_alphabetic_part(key)
+        if prefix and prefix in prefixes:
+            rescued[key] += count
+    return rescued
+
+
+def _transfer_prefix_completions(
     dxf_counter: Counter, ulkes_symbol_counter: Counter, ulkes_prefix_counter: Counter,
-) -> pd.DataFrame:
-    """構成数超過補完（`{prefix}?{ddd}`）が発生したプレフィックスについて、
-    図面側合計とULKES側合計を比較する。
+) -> None:
+    """構成数超過補完（`{prefix}?{ddd}`）の個数を、DXF側で「図面のみ」となっている
+    同プレフィックスの符号へABC順に割り当てる（2026-09-08、要求9）。
 
-    - 図面合計: `dxf_counter` のうち、そのプレフィックスで始まる符号
-      （`extract_alphabetic_part()` が一致するもの）の個数の合計。
-    - ULKES合計: `ulkes_symbol_counter` のうち同条件の合計に加え、
-      `ulkes_prefix_counter[prefix]`（帰属先不明の補完分）を足したもの。
-
-    補完が発生していないプレフィックスは対象外（0行なら比較の必要がない）。
-    columns: PREFIX_COLUMNS。プレフィックス昇順（sorted）。
+    `ulkes_symbol_counter` を直接更新する（in-place）。各プレフィックスの割り当て
+    可能数（`ulkes_prefix_counter[prefix]`）を、そのプレフィックスに一致し
+    まだULKES側に無い（＝図面のみ）DXF側符号へABC順に、DXF個数を上限として
+    割り当てる。割り当てきれず余った分は `"{prefix}?"` の1行に集約し、
+    符号単位比較表の中で「ULKESのみ」として残す。
     """
-    prefixes = sorted(ulkes_prefix_counter.keys())
-    rows = []
-    for prefix in prefixes:
-        dxf_total = sum(
-            cnt for lbl, cnt in dxf_counter.items()
-            if extract_alphabetic_part(lbl) == prefix
+    for prefix in sorted(ulkes_prefix_counter):
+        budget = ulkes_prefix_counter[prefix]
+        if budget <= 0:
+            continue
+
+        candidates = sorted(
+            sym for sym in dxf_counter
+            if extract_alphabetic_part(sym) == prefix and ulkes_symbol_counter.get(sym, 0) == 0
         )
-        ulkes_total = sum(
-            cnt for lbl, cnt in ulkes_symbol_counter.items()
-            if extract_alphabetic_part(lbl) == prefix
-        )
-        ulkes_total += ulkes_prefix_counter[prefix]
-        rows.append({'プレフィックス': prefix, '図面合計': dxf_total, 'ULKES合計': ulkes_total})
-    return pd.DataFrame(rows, columns=PREFIX_COLUMNS)
+        for sym in candidates:
+            if budget <= 0:
+                break
+            assign = min(dxf_counter[sym], budget)
+            ulkes_symbol_counter[sym] = ulkes_symbol_counter.get(sym, 0) + assign
+            budget -= assign
+
+        if budget > 0:
+            key = f'{prefix}?'
+            ulkes_symbol_counter[key] = ulkes_symbol_counter.get(key, 0) + budget
 
 
-def compare_pair(dxf_counter: Counter, ulkes_symbols) -> dict:
-    """1つの図番ペアについて、符号単位・プレフィックス単位の比較結果を返す。
+def compare_pair(dxf_counter: Counter, ulkes_symbols, rejected_counter: Counter = None) -> dict:
+    """1つの図番ペアについて、符号単位の比較結果を返す。
 
-    dxf_counter: DXF-extract-labels側の {ラベル: 個数}（NFKC正規化済み想定）。
-    ulkes_symbols: `extract_circuit_symbols()` が返した展開済み記号のリスト
-                   （未正規化。`_`分解・過不足補完は既に適用済み）。
+    Args:
+        dxf_counter: DXF側の機器符号候補 {ラベル: 個数}（原文のまま、比較キーへの
+            変換はこの関数の内部で行う）。
+        ulkes_symbols: `extract_circuit_symbols()`/`extract_all_assemblies()` が
+            返した展開済み記号のリスト（未正規化。`_`分解・過不足補完は適用済み）。
+        rejected_counter: DXF側で機器符号パターンに一致しなかったラベルの
+            {ラベル: 個数}（省略時は救済を行わない）。
 
-    戻り値: {'symbol_df': DataFrame(DIFF_COLUMNS), 'prefix_df': DataFrame(PREFIX_COLUMNS)}
+    戻り値: {'symbol_df': DataFrame(DIFF_COLUMNS)}
     """
+    keyed_dxf_counter = Counter()
+    for label, count in dxf_counter.items():
+        keyed_dxf_counter[comparison_key(label)] += count
+
+    if rejected_counter:
+        keyed_dxf_counter.update(rescue_by_ulkes_prefix(rejected_counter, ulkes_symbols))
+
     ulkes_symbol_counter, ulkes_prefix_counter = classify_symbols(ulkes_symbols)
-    return {
-        'symbol_df': compare_symbols(dxf_counter, ulkes_symbol_counter),
-        'prefix_df': compare_prefixes(dxf_counter, ulkes_symbol_counter, ulkes_prefix_counter),
-    }
+    _transfer_prefix_completions(keyed_dxf_counter, ulkes_symbol_counter, ulkes_prefix_counter)
+
+    return {'symbol_df': compare_symbols(keyed_dxf_counter, ulkes_symbol_counter)}
 
 
 def pair_by_drawing_number(dxf_map: dict, ulkes_map: dict) -> tuple:
     """図番をキーに DXF側・ULKES側をペアリングする。
 
-    dxf_map: {図番: Counter}（`dxf_labels_reader.read_dxf_labels()` の
-              `by_drawing_number`）。
+    dxf_map: {図番: Counter}（`dxf_symbol_extractor.build_dxf_symbol_map()` の戻り値）。
     ulkes_map: {図番: list[str]}（アセンブリ番号ごとの展開済み記号リスト。
               `build_ulkes_symbol_map()` の戻り値）。
 

@@ -18,17 +18,20 @@ def _minimal_result(**overrides):
 
 
 def test_create_comparison_excel_output_with_no_expansion_section():
-    """no_expansionキーがあればサマリーシートに反映され、例外なくExcelが生成される。"""
+    """no_expansionキー（ファイルごとにグループ化）があればサマリーシートに
+    反映され、例外なくExcelが生成される。"""
     symbol_df = pd.DataFrame(
         [{'符号': 'R1', '区分': '両方', '図面個数': 1, 'ULKES個数': 1}],
         columns=['符号', '区分', '図面個数', 'ULKES個数'],
     )
-    prefix_df = pd.DataFrame(columns=['プレフィックス', '図面合計', 'ULKES合計'])
 
     result = _minimal_result(
         pairs=['EE0001-000-01A'],
-        no_expansion=['EE0001-000-02A'],
-        per_pair={'EE0001-000-01A': {'symbol_df': symbol_df, 'prefix_df': prefix_df}},
+        no_expansion=[
+            ('EE0001-000-02A.xlsx', ['EE0001-000-03A', 'EE0001-000-04A']),
+            ('EE0001-000-05A.xlsx', ['EE0001-000-03A']),
+        ],
+        per_pair={'EE0001-000-01A': {'symbol_df': symbol_df}},
     )
 
     output = create_comparison_excel_output(result)

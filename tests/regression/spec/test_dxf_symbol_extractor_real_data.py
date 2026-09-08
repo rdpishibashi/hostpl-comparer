@@ -1,9 +1,9 @@
 """実DXFサンプルによる model.dxf_symbol_extractor の回帰テスト。
 
-ref_designator.extract_ref_designator_data() を経由した実際のDXF解析
-（図面枠検出→フォーマットブロック除外→NFKC正規化→候補/確定判定）は
-合成データでは再現できないため、実ファイルの構造そのものを使う
-（tests/regression/spec/README相当の方針。tech-debt-sweep/dev-workflow参照）。
+ref_designator の各公開関数（collect_in_frame_labels/normalize_labels/
+is_ref_designator_candidate）を経由した実際のDXF解析（図面枠検出→
+フォーマットブロック除外→NFKC正規化→候補判定）は合成データでは再現できない
+ため、実ファイルの構造そのものを使う。
 
 期待値は2026-09-08、sample_data/*.dxf に対して実行して確認した実測値
 （DXF-extract-labelsのアップデートで変化しうるため、値が変わったら
@@ -18,17 +18,20 @@ from model.dxf_symbol_extractor import extract_symbols_from_dxf_file
 
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
 
-# (ファイル名, 期待するラベル種類数, 期待する総出現数, 期待する未確定ラベル種類数)
+# (ファイル名, 候補ラベル種類数, 候補総出現数, 非候補ラベル種類数, 非候補総出現数)
 CASES = [
-    ("EE6312-000-01A.dxf", 45, 66, 19),
-    ("EE6313-000-01C.dxf", 45, 66, 18),
-    ("EE6661-000-05A.dxf", 43, 58, 11),
+    ("EE6312-000-01A.dxf", 45, 66, 97, 297),
+    ("EE6313-000-01C.dxf", 45, 66, 98, 286),
+    ("EE6661-000-05A.dxf", 43, 58, 106, 431),
 ]
 
 
-@pytest.mark.parametrize("filename, expected_labels, expected_total, expected_unconfirmed", CASES)
+@pytest.mark.parametrize(
+    "filename, expected_labels, expected_total, expected_rejected_labels, expected_rejected_total",
+    CASES,
+)
 def test_extract_symbols_from_dxf_file_matches_known_counts(
-    filename, expected_labels, expected_total, expected_unconfirmed
+    filename, expected_labels, expected_total, expected_rejected_labels, expected_rejected_total
 ):
     path = os.path.join(SAMPLE_DIR, filename)
     if not os.path.exists(path):
@@ -39,7 +42,8 @@ def test_extract_symbols_from_dxf_file_matches_known_counts(
     assert result['drawing_number'] == os.path.splitext(filename)[0]
     assert len(result['counter']) == expected_labels
     assert sum(result['counter'].values()) == expected_total
-    assert len(result['unconfirmed_labels']) == expected_unconfirmed
+    assert len(result['rejected_labels']) == expected_rejected_labels
+    assert sum(result['rejected_labels'].values()) == expected_rejected_total
     assert result['warning'] is None
 
 

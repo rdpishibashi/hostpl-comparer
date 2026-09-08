@@ -18,11 +18,7 @@ from model.compare_symbols import (
     pair_by_drawing_number,
     row_style,
 )
-from model.dxf_symbol_extractor import (
-    build_dxf_symbol_map,
-    drawing_number_from_filename,
-    extract_symbols_from_dxf_file,
-)
+from model.dxf_symbol_extractor import build_dxf_symbol_map, extract_symbols_from_dxf_file
 from model.extract_symbols import REQUIRED_COLUMNS, extract_all_assemblies
 
 
@@ -80,24 +76,15 @@ def _compare_row_style_factory(symbol_df: pd.DataFrame):
     return _row_style
 
 
-def _render_symbol_list(symbols, unconfirmed_labels, download_filename, key):
+def _render_symbol_list(symbols, download_filename, key):
     """機器符号リストのプレビュー（開閉ウィンドウ内）＋テキスト保存ボタン。"""
     if not symbols:
         st.caption("機器符号はありません。")
         return
 
-    unconfirmed_labels = unconfirmed_labels or set()
-    display_labels = [
-        f"{s}（未確定）" if s in unconfirmed_labels else s for s in symbols
-    ]
     st.dataframe(
-        pd.DataFrame({"機器符号": display_labels}), width="stretch", hide_index=True
+        pd.DataFrame({"機器符号": symbols}), width="stretch", hide_index=True
     )
-    if unconfirmed_labels:
-        st.caption(
-            "（未確定）は機器符号候補ではあるが確定パターンに一致しなかったラベル"
-            "（誤検出を含む可能性あり）"
-        )
     st.download_button(
         "テキストファイルを保存",
         data=_symbols_to_text(symbols).encode("utf-8"),
@@ -119,10 +106,10 @@ def _run_comparison(dxf_files, pl_files):
         finally:
             os.unlink(tmp_path)
 
-    dxf_map, unconfirmed_map, dxf_warnings = build_dxf_symbol_map(dxf_per_file)
+    dxf_map, rejected_map, dxf_warnings = build_dxf_symbol_map(dxf_per_file)
 
     ulkes_entries = []  # (assembly_number, symbols, filename)
-    no_expansion_all = []
+    no_expansion_by_file = []  # [(ファイル名, [図番, ...]), ...]
     pl_warnings = []
     for f in pl_files:
         f.seek(0)
@@ -142,7 +129,8 @@ def _run_comparison(dxf_files, pl_files):
         assemblies, no_expansion, intra_file_warnings = extract_all_assemblies(df)
         for w in intra_file_warnings:
             pl_warnings.append(f"{f.name}: {w}")
-        no_expansion_all.extend(no_expansion)
+        if no_expansion:
+            no_expansion_by_file.append((f.name, sorted(no_expansion)))
         for assembly_number, symbols in assemblies.items():
             ulkes_entries.append((assembly_number, symbols, f.name))
 
@@ -154,14 +142,15 @@ def _run_comparison(dxf_files, pl_files):
     per_pair = {}
     for drawing_number in pairs:
         per_pair[drawing_number] = compare_pair(
-            dxf_map[drawing_number], ulkes_map[drawing_number]
+            dxf_map[drawing_number], ulkes_map[drawing_number],
+            rejected_map[drawing_number],
         )
 
     result = {
         "pairs": pairs,
         "dxf_only": dxf_only,
         "ulkes_only": ulkes_only,
-        "no_expansion": sorted(set(no_expansion_all)),
+        "no_expansion": no_expansion_by_file,
         "per_pair": per_pair,
         "warnings": dxf_warnings + pl_warnings,
     }
@@ -169,15 +158,15 @@ def _run_comparison(dxf_files, pl_files):
     st.session_state["compare_result"] = result
     st.session_state["compare_output"] = create_comparison_excel_output(result)
     st.session_state["dxf_map"] = dxf_map
-    st.session_state["unconfirmed_map"] = unconfirmed_map
     st.session_state["ulkes_map"] = ulkes_map
 
 
 def _render_results():
     result = st.session_state["compare_result"]
     dxf_map = st.session_state["dxf_map"]
-    unconfirmed_map = st.session_state["unconfirmed_map"]
     ulkes_map = st.session_state["ulkes_map"]
+
+    no_expansion_total = sum(len(dns) for _f, dns in result["no_expansion"])
 
     st.divider()
     st.subheader("結果")
@@ -185,24 +174,16 @@ def _render_results():
         f"比較した図番ペア: {len(result['pairs'])}件　/　"
         f"図面のみ: {len(result['dxf_only'])}件　/　"
         f"ULKESのみ: {len(result['ulkes_only'])}件　/　"
-        f"ULKESに図番はあるが部品展開なし: {len(result['no_expansion'])}件"
+        f"ULKESに図番はあるが部品展開なし: {no_expansion_total}件"
     )
     for w in result["warnings"]:
         st.warning(w)
 
-    st.download_button(
-        "比較結果Excelをダウンロード",
-        data=st.session_state["compare_output"],
-        file_name="symbol_comparison.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
-        key="compare_download",
-    )
-
     if result["no_expansion"]:
-        st.caption(
-            "ULKESに図番はあるが部品展開なし: " + "、".join(result["no_expansion"])
-        )
+        st.markdown("**ULKES 部品リストがない図面番号**")
+        for filename, drawing_numbers in result["no_expansion"]:
+            st.write(f"{filename}：")
+            st.write("、".join(drawing_numbers))
 
     if result["pairs"]:
         st.subheader("図番ごとの比較結果")
@@ -216,11 +197,6 @@ def _render_results():
                     width="stretch",
                     hide_index=True,
                 )
-                if len(pair_data["prefix_df"]) > 0:
-                    st.caption("プレフィックス別集計（構成数超過補完分を含む）")
-                    st.dataframe(
-                        pair_data["prefix_df"], width="stretch", hide_index=True
-                    )
 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -228,7 +204,6 @@ def _render_results():
                     dxf_symbols = _flatten_counter_sorted(dxf_map[drawing_number])
                     _render_symbol_list(
                         dxf_symbols,
-                        unconfirmed_map.get(drawing_number, set()),
                         f"{drawing_number}_dxf_labels.txt",
                         key=f"dxf_dl_{drawing_number}",
                     )
@@ -236,7 +211,6 @@ def _render_results():
                     st.caption("ULKES側 機器符号リスト")
                     _render_symbol_list(
                         ulkes_map[drawing_number],
-                        set(),
                         f"{drawing_number}_partslist.txt",
                         key=f"ulkes_dl_{drawing_number}",
                     )
@@ -248,7 +222,6 @@ def _render_results():
                 dxf_symbols = _flatten_counter_sorted(dxf_map[drawing_number])
                 _render_symbol_list(
                     dxf_symbols,
-                    unconfirmed_map.get(drawing_number, set()),
                     f"{drawing_number}_dxf_labels.txt",
                     key=f"dxf_only_dl_{drawing_number}",
                 )
@@ -259,10 +232,19 @@ def _render_results():
             with st.expander(drawing_number, expanded=False):
                 _render_symbol_list(
                     ulkes_map[drawing_number],
-                    set(),
                     f"{drawing_number}_partslist.txt",
                     key=f"ulkes_only_dl_{drawing_number}",
                 )
+
+    st.divider()
+    st.download_button(
+        "比較結果をダウンロード",
+        data=st.session_state["compare_output"],
+        file_name="symbol_comparison.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        key="compare_download",
+    )
 
 
 def main():
@@ -275,7 +257,7 @@ def main():
 
     with st.expander("ℹ️ プログラム説明", expanded=False):
         st.markdown(
-            "- DXFファイル（複数可）とULKESパーツリストExcel（複数可）をアップロードして"
+            "- DXFファイル（複数可）とULKES Excelパーツリスト（複数可）をアップロードして"
             "ください。\n"
             "- **DXFの図番はファイル名（拡張子を除いた部分）をそのまま使います**"
             "（図面データからの図番抽出は行いません）。ファイル名を図番と一致させて"
@@ -284,19 +266,21 @@ def main():
             "自動検出して一括処理します。部品展開のない図番行（図面参照のみ）は"
             "比較対象から除外し、別途一覧表示します。\n"
             "- 図番が一致するペアについて、機器符号（符号単位）と個数をABC順で"
-            "比較します。ULKES側で構成数の過不足補完により付与された`?`は、"
-            "超過マーク（末尾`?`のみ）なら本体の符号として、構成数不足の補完"
-            "（`{prefix}?{連番3桁}`）なら特定の符号に帰属できないためプレフィックス"
-            "単位の合計比較として扱います。\n"
+            "比較します。DXF側で機器符号パターンに一致しなかったラベルでも、"
+            "ULKES側と同じ英字プレフィックスを持つものは機器符号として救済します。"
+            "ULKES側で構成数の過不足補完により付与された`?`は、超過マーク"
+            "（末尾`?`のみ）なら本体の符号として扱い、構成数不足の補完"
+            "（`{prefix}?{連番3桁}`）はDXF側で「図面のみ」となっている同プレフィックス"
+            "の符号へ割り当てます（割り当てきれない分は`{prefix}?`として残ります）。\n"
             "- 色分け: 青=図面のみ、緑=ULKESのみ、黄=両方にあるが個数が不一致、"
             "無色=両方にあり個数も一致。"
         )
 
     dxf_files = st.file_uploader(
-        "DXFファイル（複数選択可）", accept_multiple_files=True, key="dxf_files"
+        "DXFファイル（複数可）", accept_multiple_files=True, key="dxf_files"
     )
     pl_files = st.file_uploader(
-        "ULKESパーツリストExcelファイル（複数選択可）",
+        "ULKES Excelパーツリスト（複数可）",
         accept_multiple_files=True,
         key="pl_files",
     )
@@ -314,20 +298,6 @@ def main():
     if not dxf_targets and not pl_targets:
         st.info("DXFファイルまたはULKES PLファイルをアップロードしてください。")
         return
-
-    if dxf_targets:
-        st.subheader("DXFファイルの図番（ファイル名から決定）")
-        st.caption("この図番で照合します。ファイル名が図番と一致しているか確認してください。")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {"ファイル名": f.name, "図番": drawing_number_from_filename(f.name)}
-                    for f in dxf_targets
-                ]
-            ),
-            width="stretch",
-            hide_index=True,
-        )
 
     st.subheader("比較の実行")
     has_input = bool(dxf_targets) or bool(pl_targets)
