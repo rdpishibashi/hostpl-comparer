@@ -7,7 +7,6 @@ from model.compare_excel import create_comparison_excel_output
 def _minimal_result(**overrides):
     result = {
         'pairs': [],
-        'dxf_only': [],
         'ulkes_only': [],
         'no_expansion': [],
         'per_pair': {},
@@ -44,6 +43,21 @@ def test_create_comparison_excel_output_without_no_expansion_key_is_backward_com
     """no_expansionキーを省略しても例外なく動作する（既存呼び出し元との互換性）。"""
     result = _minimal_result()
     del result['no_expansion']
+
+    output = create_comparison_excel_output(result)
+
+    assert isinstance(output, bytes)
+    assert len(output) > 0
+
+
+def test_create_comparison_excel_output_with_no_frame_filenames_section():
+    """no_frame_filenamesキー（図面枠検出フォールバックのDXFファイル名一覧）が
+    あればサマリーシートに反映され、例外なくExcelが生成される
+    （2026-09-09、ユーザー指定。個々のファイルごとの警告文ではなく、
+    ファイル名一覧としてまとめて表示する）。"""
+    result = _minimal_result(
+        no_frame_filenames=['EE5322-455-01B.dxf', 'EE5322-455-07A.dxf'],
+    )
 
     output = create_comparison_excel_output(result)
 

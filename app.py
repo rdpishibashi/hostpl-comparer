@@ -145,7 +145,7 @@ def _run_comparison(dxf_files, pl_files):
         finally:
             os.unlink(tmp_path)
 
-    dxf_map, rejected_map, dxf_warnings = build_dxf_symbol_map(dxf_per_file)
+    dxf_map, rejected_map, no_frame_filenames, dxf_warnings = build_dxf_symbol_map(dxf_per_file)
 
     ulkes_entries = []  # (assembly_number, symbols, filename)
     no_expansion_by_file = []  # [(ファイル名, [図番, ...]), ...]
@@ -181,7 +181,7 @@ def _run_comparison(dxf_files, pl_files):
 
     no_expansion_by_file = _filter_no_expansion(no_expansion_by_file, ulkes_map)
 
-    pairs, dxf_only, ulkes_only = pair_by_drawing_number(dxf_map, ulkes_map)
+    pairs, _dxf_only, ulkes_only = pair_by_drawing_number(dxf_map, ulkes_map)
 
     per_pair = {}
     for drawing_number in pairs:
@@ -192,23 +192,21 @@ def _run_comparison(dxf_files, pl_files):
 
     result = {
         "pairs": pairs,
-        "dxf_only": dxf_only,
         "ulkes_only": ulkes_only,
         "no_expansion": no_expansion_by_file,
         "duplicate_assembly_numbers": duplicate_assembly_by_file,
+        "no_frame_filenames": no_frame_filenames,
         "per_pair": per_pair,
         "warnings": dxf_warnings + pl_warnings,
     }
 
     st.session_state["compare_result"] = result
     st.session_state["compare_output"] = create_comparison_excel_output(result)
-    st.session_state["dxf_map"] = dxf_map
     st.session_state["ulkes_map"] = ulkes_map
 
 
 def _render_results():
     result = st.session_state["compare_result"]
-    dxf_map = st.session_state["dxf_map"]
     ulkes_map = st.session_state["ulkes_map"]
 
     no_expansion_total = sum(len(dns) for _f, dns in result["no_expansion"])
@@ -217,7 +215,6 @@ def _render_results():
     st.subheader("結果")
     st.info(
         f"比較した図番ペア: {len(result['pairs'])}件　/　"
-        f"図面のみ: {len(result['dxf_only'])}件　/　"
         f"ULKESのみ: {len(result['ulkes_only'])}件　/　"
         f"ULKESに図番はあるが部品展開なし: {no_expansion_total}件"
     )
@@ -235,6 +232,10 @@ def _render_results():
         for filename, drawing_numbers in result["duplicate_assembly_numbers"]:
             st.write(f"{filename}：")
             st.write("、".join(drawing_numbers))
+
+    if result["no_frame_filenames"]:
+        st.markdown("**図面枠を検出できないDXFファイル**")
+        st.write("、".join(result["no_frame_filenames"]))
 
     if result["pairs"]:
         st.subheader(
@@ -277,17 +278,6 @@ def _render_results():
                         f"{drawing_number}_partslist.txt",
                         key=f"ulkes_dl_{drawing_number}",
                     )
-
-    if result["dxf_only"]:
-        st.subheader("図面のみに存在する図番")
-        for drawing_number in result["dxf_only"]:
-            with st.expander(drawing_number, expanded=False):
-                dxf_symbols = _flatten_counter_sorted(dxf_map[drawing_number])
-                _render_symbol_list(
-                    dxf_symbols,
-                    f"{drawing_number}_dxf_labels.txt",
-                    key=f"dxf_only_dl_{drawing_number}",
-                )
 
     if result["ulkes_only"]:
         st.subheader("ULKESのみに存在する図番")

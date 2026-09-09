@@ -54,10 +54,10 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
     no_expansion_by_file = result.get('no_expansion', [])
     no_expansion_total = sum(len(drawing_numbers) for _filename, drawing_numbers in no_expansion_by_file)
     duplicate_by_file = result.get('duplicate_assembly_numbers', [])
+    no_frame_filenames = result.get('no_frame_filenames', [])
 
     rows = [
         {'項目': '比較した図番ペア数', '値': len(result['pairs'])},
-        {'項目': '図面のみの図番数', '値': len(result['dxf_only'])},
         {'項目': 'ULKESのみの図番数', '値': len(result['ulkes_only'])},
     ]
     if no_expansion_total:
@@ -103,10 +103,10 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
         next_row += 1
 
     _write_section('比較した図番一覧（クリックでシートへ移動）', result['pairs'], as_link=True)
-    _write_section('図面のみに存在する図番', result['dxf_only'])
     _write_section('ULKESのみに存在する図番', result['ulkes_only'])
     _write_grouped_by_file_section('ULKESに図番はあるが部品展開なし', no_expansion_by_file)
     _write_grouped_by_file_section('複数回記載されている図面番号', duplicate_by_file)
+    _write_section('図面枠を検出できないDXFファイル', no_frame_filenames)
     _write_section('警告', result.get('warnings', []))
 
     ws.set_column(0, 0, 55)
@@ -118,7 +118,6 @@ def create_comparison_excel_output(result: dict) -> bytes:
 
     result = {
         'pairs': [図番, ...]（比較したペアの図番、昇順）,
-        'dxf_only': [図番, ...],
         'ulkes_only': [図番, ...],
         'no_expansion': [(ULKESファイル名, [図番, ...]), ...]（省略可。ファイルの
             処理順。ULKES側に図番はあるが部品展開行が0件だったもの。比較対象からは
@@ -128,9 +127,16 @@ def create_comparison_excel_output(result: dict) -> bytes:
         'duplicate_assembly_numbers': [(ULKESファイル名, [図番, ...]), ...]（省略可。
             ファイル内で同一アセンブリ番号が複数回出現したもの。各ファイル内で
             ユニーク化・ABC順ソート済み。最初に出現したブロックのみが比較対象になる）,
+        'no_frame_filenames': [DXFファイル名, ...]（省略可。図面枠検出に失敗し
+            フォールバック処理したDXFファイル。出現順）,
         'per_pair': {図番: {'symbol_df': DataFrame}},
         'warnings': [str, ...],
     }
+
+    「図面のみに存在する図番」は表示・出力しない（2026-09-09、ユーザー指定。
+    DXF側の図番はファイル名そのものであり、一覧を見ても新たな情報が無いため）。
+    `pair_by_drawing_number()`が返す`dxf_only`は呼び出し元で受け取っても
+    このresult辞書には含めないこと。
 
     シート構成: サマリー → 図番ごとのシート（`pairs` の順）。
     符号単位比較の行は表示スタイル区分（青=図面のみ／緑=ULKESのみ／

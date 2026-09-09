@@ -92,20 +92,25 @@ def build_dxf_symbol_map(per_file_results):
             （アップロード順）
 
     Returns:
-        tuple[dict[str, Counter], dict[str, Counter], list[str]]:
+        tuple[dict[str, Counter], dict[str, Counter], list[str], list[str]]:
             - 図番ごとの機器符号候補Counter
             - 図番ごとの非候補ラベルCounter（救済判定にのみ使う）
-            - 警告メッセージのリスト（図番の重複・図面枠検出フォールバック）
+            - 図面枠検出フォールバックが発生したファイル名のリスト（出現順。
+              メッセージ文字列ではなく生のファイル名——呼び出し元でまとめて
+              表示する）
+            - 警告メッセージのリスト（図番の重複のみ。図面枠検出フォール
+              バックは上記の専用リストに分離した）
     """
     symbol_map = {}
     rejected_map = {}
+    no_frame_filenames = []
     warnings = []
 
     for result in per_file_results:
         dn = result['drawing_number']
 
         if result['warning']:
-            warnings.append(f"{result['filename']}: {result['warning']}")
+            no_frame_filenames.append(result['filename'])
 
         if dn in symbol_map:
             warnings.append(
@@ -117,4 +122,4 @@ def build_dxf_symbol_map(per_file_results):
         symbol_map[dn] = Counter(result['counter'])
         rejected_map[dn] = Counter(result['rejected_labels'])
 
-    return symbol_map, rejected_map, warnings
+    return symbol_map, rejected_map, no_frame_filenames, warnings

@@ -30,7 +30,8 @@ def test_end_to_end_pipeline_with_real_ee6312_data():
 
     # 1. DXF側の抽出
     dxf_result = extract_symbols_from_dxf_file(dxf_path, original_filename="EE6312-000-01A.dxf")
-    dxf_map, rejected_map, dxf_warnings = build_dxf_symbol_map([dxf_result])
+    dxf_map, rejected_map, no_frame_filenames, dxf_warnings = build_dxf_symbol_map([dxf_result])
+    assert no_frame_filenames == []
     assert dxf_warnings == []
     assert "EE6312-000-01A" in dxf_map
 
@@ -48,7 +49,7 @@ def test_end_to_end_pipeline_with_real_ee6312_data():
     assert ulkes_cross_warnings == []
 
     # 3. 図番ペアリング
-    pairs, dxf_only, ulkes_only = pair_by_drawing_number(dxf_map, ulkes_map)
+    pairs, _dxf_only, ulkes_only = pair_by_drawing_number(dxf_map, ulkes_map)
     assert "EE6312-000-01A" in pairs
 
     # 4. 符号単位比較（DXF側候補＋ULKESプレフィックス救済＋構成数超過補完の振替）
@@ -75,7 +76,6 @@ def test_end_to_end_pipeline_with_real_ee6312_data():
     # 5. Excel出力まで例外なく完走する
     result = {
         "pairs": pairs,
-        "dxf_only": dxf_only,
         "ulkes_only": ulkes_only,
         "no_expansion": [("EE6312-000-01A.xlsx", sorted(no_expansion))],
         "per_pair": per_pair,

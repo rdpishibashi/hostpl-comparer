@@ -45,10 +45,11 @@ def test_build_dxf_symbol_map_single_file_per_drawing():
     results = [
         _result("EE0001-000-01A", "EE0001-000-01A.dxf", ["R1", "R1", "CN1"], rejected=["GND"]),
     ]
-    symbol_map, rejected_map, warnings = build_dxf_symbol_map(results)
+    symbol_map, rejected_map, no_frame_filenames, warnings = build_dxf_symbol_map(results)
 
     assert symbol_map == {"EE0001-000-01A": Counter({"R1": 2, "CN1": 1})}
     assert rejected_map == {"EE0001-000-01A": Counter({"GND": 1})}
+    assert no_frame_filenames == []
     assert warnings == []
 
 
@@ -58,21 +59,25 @@ def test_build_dxf_symbol_map_takes_first_file_on_duplicate_drawing_number_and_w
         _result("EE0001-000-01A", "a.dxf", ["R1"], rejected=["X1"]),
         _result("EE0001-000-01A", "b.dxf", ["R1", "C1"], rejected=["X2"]),
     ]
-    symbol_map, rejected_map, warnings = build_dxf_symbol_map(results)
+    symbol_map, rejected_map, no_frame_filenames, warnings = build_dxf_symbol_map(results)
 
     assert symbol_map == {"EE0001-000-01A": Counter({"R1": 1})}
     assert rejected_map == {"EE0001-000-01A": Counter({"X1": 1})}
+    assert no_frame_filenames == []
     assert len(warnings) == 1
     assert "EE0001-000-01A" in warnings[0]
     assert "b.dxf" in warnings[0]
 
 
-def test_build_dxf_symbol_map_collects_frame_detection_warning():
+def test_build_dxf_symbol_map_collects_no_frame_filename_as_raw_name():
+    """図面枠検出フォールバックが発生したファイルは、メッセージ文字列ではなく
+    生のファイル名のリスト（`no_frame_filenames`）として返す（2026-09-09、
+    ユーザー指定。呼び出し元がまとめて「図面枠を検出できないDXFファイル」として
+    表示する）。`warnings`にはこの件は含まれない（図番重複のみを扱う）。"""
     results = [
         _result("EE0001-000-01A", "a.dxf", ["R1"], warning="図面枠が見つかりません"),
     ]
-    _symbol_map, _rejected_map, warnings = build_dxf_symbol_map(results)
+    _symbol_map, _rejected_map, no_frame_filenames, warnings = build_dxf_symbol_map(results)
 
-    assert len(warnings) == 1
-    assert "a.dxf" in warnings[0]
-    assert "図面枠が見つかりません" in warnings[0]
+    assert no_frame_filenames == ["a.dxf"]
+    assert warnings == []
