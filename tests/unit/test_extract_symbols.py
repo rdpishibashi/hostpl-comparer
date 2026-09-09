@@ -47,8 +47,10 @@ def test_extract_all_assemblies_reports_no_expansion_blocks():
     assert warnings == []
 
 
-def test_extract_all_assemblies_warns_on_duplicate_assembly_number_in_file():
-    """同一アセンブリ番号がファイル内に複数回出現する場合、最初のブロックのみ採用し警告する。"""
+def test_extract_all_assemblies_reports_duplicate_assembly_number_in_file():
+    """同一アセンブリ番号がファイル内に複数回出現する場合、最初のブロックのみ採用し、
+    2回目以降の出現をduplicate_assembly_numbersに生の図番文字列として返す
+    （メッセージ文字列ではない。呼び出し元でユニーク化・表示形式を組み立てる）。"""
     df = _df([
         ("EE0001-000-01A", None, None, None),
         (None, "R1", None, 1),
@@ -56,12 +58,11 @@ def test_extract_all_assemblies_warns_on_duplicate_assembly_number_in_file():
         (None, "C1", None, 1),
     ])
 
-    result, no_expansion, warnings = extract_all_assemblies(df)
+    result, no_expansion, duplicate_assembly_numbers = extract_all_assemblies(df)
 
     assert result == {"EE0001-000-01A": ["R1"]}
     assert no_expansion == []
-    assert len(warnings) == 1
-    assert "EE0001-000-01A" in warnings[0]
+    assert duplicate_assembly_numbers == ["EE0001-000-01A"]
 
 
 def test_extract_all_assemblies_raises_on_missing_required_columns():

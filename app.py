@@ -149,6 +149,7 @@ def _run_comparison(dxf_files, pl_files):
 
     ulkes_entries = []  # (assembly_number, symbols, filename)
     no_expansion_by_file = []  # [(ファイル名, [図番, ...]), ...]
+    duplicate_assembly_by_file = []  # [(ファイル名, [図番, ...]), ...]（ユニーク・ABC順）
     pl_warnings = []
     for f in pl_files:
         f.seek(0)
@@ -165,11 +166,13 @@ def _run_comparison(dxf_files, pl_files):
             )
             continue
 
-        assemblies, no_expansion, intra_file_warnings = extract_all_assemblies(df)
-        for w in intra_file_warnings:
-            pl_warnings.append(f"{f.name}: {w}")
+        assemblies, no_expansion, duplicate_assembly_numbers = extract_all_assemblies(df)
         if no_expansion:
             no_expansion_by_file.append((f.name, sorted(no_expansion)))
+        if duplicate_assembly_numbers:
+            duplicate_assembly_by_file.append(
+                (f.name, sorted(set(duplicate_assembly_numbers)))
+            )
         for assembly_number, symbols in assemblies.items():
             ulkes_entries.append((assembly_number, symbols, f.name))
 
@@ -192,6 +195,7 @@ def _run_comparison(dxf_files, pl_files):
         "dxf_only": dxf_only,
         "ulkes_only": ulkes_only,
         "no_expansion": no_expansion_by_file,
+        "duplicate_assembly_numbers": duplicate_assembly_by_file,
         "per_pair": per_pair,
         "warnings": dxf_warnings + pl_warnings,
     }
@@ -223,6 +227,12 @@ def _render_results():
     if result["no_expansion"]:
         st.markdown("**ULKES 部品リストがない図面番号**")
         for filename, drawing_numbers in result["no_expansion"]:
+            st.write(f"{filename}：")
+            st.write("、".join(drawing_numbers))
+
+    if result["duplicate_assembly_numbers"]:
+        st.markdown("**複数回記載されている図面番号**")
+        for filename, drawing_numbers in result["duplicate_assembly_numbers"]:
             st.write(f"{filename}：")
             st.write("、".join(drawing_numbers))
 
@@ -281,13 +291,7 @@ def _render_results():
 
     if result["ulkes_only"]:
         st.subheader("ULKESのみに存在する図番")
-        for drawing_number in result["ulkes_only"]:
-            with st.expander(drawing_number, expanded=False):
-                _render_symbol_list(
-                    ulkes_map[drawing_number],
-                    f"{drawing_number}_partslist.txt",
-                    key=f"ulkes_only_dl_{drawing_number}",
-                )
+        st.write("、".join(result["ulkes_only"]))
 
     st.divider()
     st.download_button(

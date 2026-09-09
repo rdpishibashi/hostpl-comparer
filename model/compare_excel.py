@@ -53,6 +53,7 @@ def _write_pair_sheet(writer, sheet_name, symbol_df, header_fmt, style_formats):
 def _write_summary_sheet(writer, result, header_fmt, link_fmt):
     no_expansion_by_file = result.get('no_expansion', [])
     no_expansion_total = sum(len(drawing_numbers) for _filename, drawing_numbers in no_expansion_by_file)
+    duplicate_by_file = result.get('duplicate_assembly_numbers', [])
 
     rows = [
         {'項目': '比較した図番ペア数', '値': len(result['pairs'])},
@@ -87,7 +88,7 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
             next_row += 1
         next_row += 1
 
-    def _write_no_expansion_section(title, by_file):
+    def _write_grouped_by_file_section(title, by_file):
         """ULKESファイルごとにグループ化した図番一覧を書く（重複排除はしない）。"""
         nonlocal next_row
         if not by_file:
@@ -104,7 +105,8 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
     _write_section('比較した図番一覧（クリックでシートへ移動）', result['pairs'], as_link=True)
     _write_section('図面のみに存在する図番', result['dxf_only'])
     _write_section('ULKESのみに存在する図番', result['ulkes_only'])
-    _write_no_expansion_section('ULKESに図番はあるが部品展開なし', no_expansion_by_file)
+    _write_grouped_by_file_section('ULKESに図番はあるが部品展開なし', no_expansion_by_file)
+    _write_grouped_by_file_section('複数回記載されている図面番号', duplicate_by_file)
     _write_section('警告', result.get('warnings', []))
 
     ws.set_column(0, 0, 55)
@@ -123,6 +125,9 @@ def create_comparison_excel_output(result: dict) -> bytes:
             除外し、サマリーシートにファイルごとにグループ化して別掲する。
             同じ図番が複数ファイルに重複して現れてもよい（ファイル横断での
             重複排除はしない））,
+        'duplicate_assembly_numbers': [(ULKESファイル名, [図番, ...]), ...]（省略可。
+            ファイル内で同一アセンブリ番号が複数回出現したもの。各ファイル内で
+            ユニーク化・ABC順ソート済み。最初に出現したブロックのみが比較対象になる）,
         'per_pair': {図番: {'symbol_df': DataFrame}},
         'warnings': [str, ...],
     }

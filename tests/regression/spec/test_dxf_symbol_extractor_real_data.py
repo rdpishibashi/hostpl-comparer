@@ -7,7 +7,9 @@ is_ref_designator_candidate）を経由した実際のDXF解析（図面枠検�
 
 期待値は2026-09-08、sample_data/*.dxf に対して実行して確認した実測値
 （DXF-extract-labelsのアップデートで変化しうるため、値が変わったら
-意図した変更か確認してから更新すること）。
+意図した変更か確認してから更新すること）。2026-09-09、`Tools/sample-dxf/`から
+実DXFの図番とULKES PLの図番が一致する12件を追加（`problems/`・
+`terminal-detector/`由来）。
 """
 import glob
 import os
@@ -18,20 +20,35 @@ from model.dxf_symbol_extractor import extract_symbols_from_dxf_file
 
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
 
-# (ファイル名, 候補ラベル種類数, 候補総出現数, 非候補ラベル種類数, 非候補総出現数)
+# (ファイル名, 候補ラベル種類数, 候補総出現数, 非候補ラベル種類数, 非候補総出現数,
+#  図面枠検出フォールバック警告の有無)
 CASES = [
-    ("EE6312-000-01A.dxf", 45, 66, 97, 297),
-    ("EE6313-000-01C.dxf", 45, 66, 98, 286),
-    ("EE6661-000-05A.dxf", 43, 58, 106, 431),
+    ("EE6312-000-01A.dxf", 45, 66, 97, 297, False),
+    ("EE6313-000-01C.dxf", 45, 66, 98, 286, False),
+    ("EE6661-000-05A.dxf", 43, 58, 106, 431, False),
+    ("EE2685-335-01D.dxf", 0, 0, 3, 3, False),
+    ("EE2685-475-96A.dxf", 0, 0, 3, 3, False),
+    ("EE5322-455-01B.dxf", 6, 10, 54, 74, True),
+    ("EE5322-455-07A.dxf", 1, 1, 22, 24, True),
+    ("EE6492-039-90A.dxf", 2, 2, 47, 67, False),
+    ("EE6676-601-02A.dxf", 137, 159, 396, 956, False),
+    ("EE6888-637-01A.dxf", 16, 16, 102, 144, False),
+    ("EE6888-639-01A.dxf", 7, 7, 63, 76, False),
+    ("EE6888-650-01C.dxf", 101, 128, 221, 509, False),
+    ("EE6888-660-01A.dxf", 2, 2, 57, 64, False),
+    ("EE6892-612-01B.dxf", 98, 100, 272, 573, False),
+    ("EE6892-617-01B.dxf", 30, 32, 163, 272, False),
 ]
 
 
 @pytest.mark.parametrize(
-    "filename, expected_labels, expected_total, expected_rejected_labels, expected_rejected_total",
+    "filename, expected_labels, expected_total, expected_rejected_labels, "
+    "expected_rejected_total, expects_warning",
     CASES,
 )
 def test_extract_symbols_from_dxf_file_matches_known_counts(
-    filename, expected_labels, expected_total, expected_rejected_labels, expected_rejected_total
+    filename, expected_labels, expected_total, expected_rejected_labels,
+    expected_rejected_total, expects_warning,
 ):
     path = os.path.join(SAMPLE_DIR, filename)
     if not os.path.exists(path):
@@ -44,7 +61,10 @@ def test_extract_symbols_from_dxf_file_matches_known_counts(
     assert sum(result['counter'].values()) == expected_total
     assert len(result['rejected_labels']) == expected_rejected_labels
     assert sum(result['rejected_labels'].values()) == expected_rejected_total
-    assert result['warning'] is None
+    if expects_warning:
+        assert result['warning'] is not None
+    else:
+        assert result['warning'] is None
 
 
 def test_all_sample_dxf_files_are_covered_by_cases():

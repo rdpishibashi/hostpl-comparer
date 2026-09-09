@@ -3,7 +3,7 @@ extract_all_assemblies() の回帰テスト。
 
 2026-09-09、ユーザーから提供。1ファイル内に122件の部品展開済みアセンブリと
 156件の部品展開なし（参照のみ）図番が混在する実データで、複数アセンブリ
-自動検出・ファイル内重複警告が正しく動作することを確認する（設計時点では
+自動検出・ファイル内重複検出が正しく動作することを確認する（設計時点では
 未提供だった実データでの検証）。
 
 このファイルは実クライアントの構成データ（部品番号・メーカー名等を含む）
@@ -26,13 +26,13 @@ def test_extract_all_assemblies_with_real_multi_assembly_file():
         pytest.skip(f"実データサンプルが見つかりません: {path}")
 
     df = pd.read_excel(path)
-    assemblies, no_expansion, warnings = extract_all_assemblies(df)
+    assemblies, no_expansion, duplicate_assembly_numbers = extract_all_assemblies(df)
 
     assert len(assemblies) == 122
     assert len(no_expansion) == 156
-    assert len(warnings) == 11
+    assert len(duplicate_assembly_numbers) == 11
     assert sum(len(symbols) for symbols in assemblies.values()) == 2779
 
-    # 重複警告はいずれも「ファイル内に複数回出現」のメッセージ形式であること
-    for w in warnings:
-        assert "複数回出現しています" in w
+    # 重複は生のアセンブリ番号文字列（メッセージ文字列ではない）で返ること
+    for assembly_number in duplicate_assembly_numbers:
+        assert assembly_number in assemblies or assembly_number in no_expansion

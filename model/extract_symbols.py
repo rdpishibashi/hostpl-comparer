@@ -238,8 +238,10 @@ def extract_all_assemblies(df):
             - アセンブリ番号ごとの回路記号リスト（部品展開が1行以上あるもののみ）
             - 部品展開が0行だったアセンブリ番号のリスト（ファイル出現順。図番は存在するが
               部品構成行を持たない＝図面参照行のみのケース）
-            - 警告メッセージのリスト（同一アセンブリ番号がファイル内に複数回出現した場合。
-              最初に出現したブロックのみを採用する）
+            - ファイル内に複数回出現したアセンブリ番号のリスト（出現順、重複あり得る。
+              最初に出現したブロックのみを採用し、2回目以降の出現ごとに1件追加する。
+              メッセージ文字列ではなく生の図番文字列を返す——呼び出し元でユニーク化・
+              ソート・表示形式の組み立てを行う）
 
     Raises:
         ValueError: 必須列がDataFrameに存在しない場合
@@ -250,15 +252,12 @@ def extract_all_assemblies(df):
 
     result = {}
     no_expansion = []
-    warnings = []
+    duplicate_assembly_numbers = []
     seen = set()
 
     for assembly_number, row_indices in _find_assembly_blocks(df):
         if assembly_number in seen:
-            warnings.append(
-                f"アセンブリ番号 '{assembly_number}' がファイル内に複数回出現しています"
-                f"（最初に出現したブロックのみを使用します）"
-            )
+            duplicate_assembly_numbers.append(assembly_number)
             continue
         seen.add(assembly_number)
 
@@ -268,4 +267,4 @@ def extract_all_assemblies(df):
 
         result[assembly_number] = _process_rows(df, row_indices)
 
-    return result, no_expansion, warnings
+    return result, no_expansion, duplicate_assembly_numbers
