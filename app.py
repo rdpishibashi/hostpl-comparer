@@ -180,6 +180,9 @@ def _run_comparison(dxf_files, pl_files):
     pl_warnings.extend(cross_file_warnings)
 
     no_expansion_by_file = _filter_no_expansion(no_expansion_by_file, ulkes_map)
+    no_expansion_by_file = sorted(no_expansion_by_file, key=lambda item: item[0])
+    duplicate_assembly_by_file = sorted(duplicate_assembly_by_file, key=lambda item: item[0])
+    no_frame_filenames = sorted(no_frame_filenames)
 
     pairs, _dxf_only, ulkes_only = pair_by_drawing_number(dxf_map, ulkes_map)
 
@@ -220,22 +223,6 @@ def _render_results():
     )
     for w in result["warnings"]:
         st.warning(w)
-
-    if result["no_expansion"]:
-        st.markdown("**ULKES 部品リストがない図面番号**")
-        for filename, drawing_numbers in result["no_expansion"]:
-            st.write(f"{filename}：")
-            st.write("、".join(drawing_numbers))
-
-    if result["duplicate_assembly_numbers"]:
-        st.markdown("**複数回記載されている図面番号**")
-        for filename, drawing_numbers in result["duplicate_assembly_numbers"]:
-            st.write(f"{filename}：")
-            st.write("、".join(drawing_numbers))
-
-    if result["no_frame_filenames"]:
-        st.markdown("**図面枠を検出できないDXFファイル**")
-        st.write("、".join(result["no_frame_filenames"]))
 
     if result["pairs"]:
         st.subheader(
@@ -280,8 +267,24 @@ def _render_results():
                     )
 
     if result["ulkes_only"]:
-        st.subheader("ULKESのみに存在する図番")
+        st.markdown("**ULKESのみに存在する図番**")
         st.write("、".join(result["ulkes_only"]))
+
+    if result["no_expansion"]:
+        st.markdown("**部品リストがないULKESの図面番号**")
+        for filename, drawing_numbers in result["no_expansion"]:
+            st.write(f"{filename}：")
+            st.write("、".join(drawing_numbers))
+
+    if result["duplicate_assembly_numbers"]:
+        st.markdown("**複数回記載されているULKESの図面番号**")
+        for filename, drawing_numbers in result["duplicate_assembly_numbers"]:
+            st.write(f"{filename}：")
+            st.write("、".join(drawing_numbers))
+
+    if result["no_frame_filenames"]:
+        st.markdown("**図面枠を検出できないDXFファイル**")
+        st.write("、".join(result["no_frame_filenames"]))
 
     st.divider()
     st.download_button(
