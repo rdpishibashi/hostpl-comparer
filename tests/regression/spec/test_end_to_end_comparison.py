@@ -1,5 +1,6 @@
 """DXF抽出→PL抽出→図番ペアリング→比較→Excel出力の一連のパイプラインを
-実データ（sample_data/EE6312-000-01A.dxf + .xlsx）で確認する結合テスト。
+実データ（sample_data/DXF_files/EE6312-000-01A.dxf +
+sample_data/ULKES_files/EE6312-000-01A.xlsx）で確認する結合テスト。
 
 各モジュール単体のテストは別ファイルにあるため、ここでは「実際にapp.pyが
 たどる配線」がエンドツーエンドで例外なく動作し、期待する形の結果になることを
@@ -20,11 +21,13 @@ from model.dxf_symbol_extractor import build_dxf_symbol_map, extract_symbols_fro
 from model.extract_symbols import extract_all_assemblies
 
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
+DXF_SAMPLE_DIR = os.path.join(SAMPLE_DIR, "DXF_files")
+ULKES_SAMPLE_DIR = os.path.join(SAMPLE_DIR, "ULKES_files")
 
 
 def test_end_to_end_pipeline_with_real_ee6312_data():
-    dxf_path = os.path.join(SAMPLE_DIR, "EE6312-000-01A.dxf")
-    xlsx_path = os.path.join(SAMPLE_DIR, "EE6312-000-01A.xlsx")
+    dxf_path = os.path.join(DXF_SAMPLE_DIR, "EE6312-000-01A.dxf")
+    xlsx_path = os.path.join(ULKES_SAMPLE_DIR, "EE6312-000-01A.xlsx")
     if not os.path.exists(dxf_path) or not os.path.exists(xlsx_path):
         pytest.skip("実データサンプル（EE6312-000-01A）が見つかりません")
 

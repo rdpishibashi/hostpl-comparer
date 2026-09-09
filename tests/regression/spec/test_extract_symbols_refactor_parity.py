@@ -19,7 +19,7 @@ import pytest
 
 from model.extract_symbols import extract_circuit_symbols
 
-SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
+SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data", "ULKES_files")
 
 # (ファイル名, アセンブリ番号, 期待する対象行数, 期待する抽出記号数)
 CASES = [

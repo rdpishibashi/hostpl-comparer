@@ -5,7 +5,7 @@ is_ref_designator_candidate）を経由した実際のDXF解析（図面枠検�
 フォーマットブロック除外→NFKC正規化→候補判定）は合成データでは再現できない
 ため、実ファイルの構造そのものを使う。
 
-期待値は2026-09-08、sample_data/*.dxf に対して実行して確認した実測値
+期待値は2026-09-08、sample_data/DXF_files/*.dxf に対して実行して確認した実測値
 （DXF-extract-labelsのアップデートで変化しうるため、値が変わったら
 意図した変更か確認してから更新すること）。2026-09-09、`Tools/sample-dxf/`から
 実DXFの図番とULKES PLの図番が一致する12件を追加（`problems/`・
@@ -18,7 +18,7 @@ import pytest
 
 from model.dxf_symbol_extractor import extract_symbols_from_dxf_file
 
-SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
+SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data", "DXF_files")
 
 # (ファイル名, 候補ラベル種類数, 候補総出現数, 非候補ラベル種類数, 非候補総出現数,
 #  図面枠検出フォールバック警告の有無)

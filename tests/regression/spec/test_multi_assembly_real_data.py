@@ -16,7 +16,7 @@ import pytest
 
 from model.extract_symbols import extract_all_assemblies
 
-SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data")
+SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "sample_data", "ULKES_files")
 SAMPLE_FILE = "ME26-4702-0_ZMR1_展開レベル4.xlsx"
 
 
