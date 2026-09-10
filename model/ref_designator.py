@@ -29,7 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import ezdxf
 
-from .common_utils import normalize_width
+from .common_utils import normalize_width, is_invisible
 from .extract_labels import extract_text_from_entity, _block_has_text_content
 from .region_detector import detect_drawing_frames, assign_region_labels
 
@@ -399,6 +399,12 @@ def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FR
                 and getattr(e.dxf, 'color', None) == frame_color)
 
     for e in msp:
+        # invisible属性（非表示設定）が立ったエンティティは紙面に一切表示されない
+        # ため、INSERT自身がinvisibleならその中身ごと丸ごと除外する（is_invisibleの
+        # docstring参照。旧版タイトルブロックが機器符号・図面枠として誤検出される
+        # のを防ぐ）。
+        if is_invisible(e):
+            continue
         t = e.dxftype()
         if t == 'LINE':
             if is_frame_line(e):
@@ -412,6 +418,8 @@ def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FR
                 # 枠外位置記号）は丸ごと除外する
                 try:
                     for v in e.virtual_entities():
+                        if is_invisible(v):
+                            continue
                         if v.dxftype() == 'LINE' and is_frame_line(v):
                             frame_lines.append((v.dxf.start, v.dxf.end))
                 except Exception:
@@ -421,6 +429,8 @@ def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FR
                     continue
                 try:
                     for v in e.virtual_entities():
+                        if is_invisible(v):
+                            continue
                         if v.dxftype() in ('TEXT', 'MTEXT'):
                             label_entities.append(v)
                 except Exception:
