@@ -27,7 +27,7 @@ except ImportError:
 
     extraction_config = ExtractionConfig()
 
-from .common_utils import process_circuit_symbol_labels
+from .common_utils import process_circuit_symbol_labels, is_invisible
 
 
 def get_layers_from_dxf(dxf_file):
@@ -204,11 +204,13 @@ def _titleblock_frame_bbox(doc, group_handle, frame_lineweight=100, frame_color=
                     break
             if insert_entity is not None:
                 break
-        if insert_entity is None:
+        if insert_entity is None or is_invisible(insert_entity):
             return None
 
         xs, ys = [], []
         for v in insert_entity.virtual_entities():
+            if is_invisible(v):
+                continue
             if v.dxftype() == 'LINE':
                 if getattr(v.dxf, 'lineweight', None) == frame_lineweight and getattr(v.dxf, 'color', None) == frame_color:
                     xs.extend([v.dxf.start[0], v.dxf.end[0]])
@@ -585,7 +587,12 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
             return getattr(entity.dxf, 'handle', None)
 
         # MODEL_SPACE
+        # invisible属性（非表示設定）が立ったエンティティは紙面に一切表示されない
+        # ため、直接配置・INSERT展開いずれの経路でも収集対象から除外する
+        # （common_utils.is_invisibleのdocstring参照）。
         for e in msp:
+            if is_invisible(e):
+                continue
             if e.dxftype() in ['TEXT', 'MTEXT']:
                 all_entities_to_process.append((e, _entity_handle(e)))
 
@@ -594,6 +601,8 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
             for layout in doc.layouts:
                 if layout.name != 'Model':
                     for e in layout:
+                        if is_invisible(e):
+                            continue
                         if e.dxftype() in ['TEXT', 'MTEXT']:
                             all_entities_to_process.append((e, _entity_handle(e)))
         except Exception:
@@ -603,15 +612,22 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         # 展開後の仮想エンティティには親 INSERT の handle をグループキーとして付与する。
         # テキストを含まないブロック（手描き回路図のコネクタ等の記号で多い）は
         # virtual_entities() を呼ぶ前にスキップし、無駄な展開コストを避ける。
+        # INSERT自身がinvisibleなら中身ごと丸ごと除外し（virtual_entities()は親の
+        # invisible属性を継承しないため明示チェックが必要）、展開後の個々の仮想
+        # エンティティにもinvisibleが立っている場合があるため、そちらも個別に除外する。
         block_text_cache = {}
         try:
             for e in msp:
                 if e.dxftype() == 'INSERT' and e.dxf.layer in selected_layers:
+                    if is_invisible(e):
+                        continue
                     if not _block_has_text_content(doc, e.dxf.name, block_text_cache):
                         continue
                     insert_group = _entity_handle(e)
                     try:
                         for virtual_entity in e.virtual_entities():
+                            if is_invisible(virtual_entity):
+                                continue
                             if virtual_entity.dxftype() in ['TEXT', 'MTEXT']:
                                 all_entities_to_process.append((virtual_entity, insert_group))
                     except Exception:
@@ -621,11 +637,15 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
                 if layout.name != 'Model':
                     for e in layout:
                         if e.dxftype() == 'INSERT' and e.dxf.layer in selected_layers:
+                            if is_invisible(e):
+                                continue
                             if not _block_has_text_content(doc, e.dxf.name, block_text_cache):
                                 continue
                             insert_group = _entity_handle(e)
                             try:
                                 for virtual_entity in e.virtual_entities():
+                                    if is_invisible(virtual_entity):
+                                        continue
                                     if virtual_entity.dxftype() in ['TEXT', 'MTEXT']:
                                         all_entities_to_process.append((virtual_entity, insert_group))
                             except Exception:

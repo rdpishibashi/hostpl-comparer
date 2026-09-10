@@ -9,7 +9,11 @@ is_ref_designator_candidate）を経由した実際のDXF解析（図面枠検�
 （DXF-extract-labelsのアップデートで変化しうるため、値が変わったら
 意図した変更か確認してから更新すること）。2026-09-09、`Tools/sample-dxf/`から
 実DXFの図番とULKES PLの図番が一致する12件を追加（`problems/`・
-`terminal-detector/`由来）。
+`terminal-detector/`由来）。2026-09-11、invisible属性（非表示設定）付き
+エンティティを収集対象から除外する修正に伴い、EE6892-612-01B.dxf・
+EE6892-617-01B.dxfの2件で期待値を更新（いずれも旧版タイトルブロック
+〈非表示設定で残存していた設計者名'Takahashi'/'TAKEDA'等〉がrejected_labels
+から消えたことによる、意図した減少）。
 """
 import glob
 import os
@@ -36,8 +40,8 @@ CASES = [
     ("EE6888-639-01A.dxf", 7, 7, 63, 76, False),
     ("EE6888-650-01C.dxf", 101, 128, 221, 509, False),
     ("EE6888-660-01A.dxf", 2, 2, 57, 64, False),
-    ("EE6892-612-01B.dxf", 98, 100, 272, 573, False),
-    ("EE6892-617-01B.dxf", 30, 32, 163, 272, False),
+    ("EE6892-612-01B.dxf", 98, 100, 232, 507, False),
+    ("EE6892-617-01B.dxf", 29, 31, 155, 258, False),
 ]
 
 

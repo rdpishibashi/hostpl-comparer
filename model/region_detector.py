@@ -29,7 +29,7 @@ from collections import Counter, defaultdict
 import ezdxf
 
 from .extract_labels import extract_text_from_entity, extract_drawing_numbers
-from .common_utils import filter_non_circuit_symbols, normalize_width
+from .common_utils import filter_non_circuit_symbols, normalize_width, is_invisible
 
 
 # ============================================================
@@ -165,6 +165,12 @@ def _collect_region_geometry(msp, cfg):
             region_lines_lp.append(((p0[0], p0[1]), (p1[0], p1[1]), handle))
 
     for e in msp:
+        # invisible属性（非表示設定）が立ったエンティティは紙面に一切表示されない
+        # ため、INSERT自身がinvisibleならその中身ごと丸ごと除外する（is_invisibleの
+        # docstring参照。旧版タイトルブロックが図面枠・領域境界・領域名候補として
+        # 誤検出されるのを防ぐ）。
+        if is_invisible(e):
+            continue
         t = e.dxftype()
         if t == 'LINE':
             handle_line(e)
@@ -178,6 +184,8 @@ def _collect_region_geometry(msp, cfg):
                 connection_points.append((ins[0], ins[1]))
             try:
                 for v in e.virtual_entities():
+                    if is_invisible(v):
+                        continue
                     vt = v.dxftype()
                     if vt == 'LINE':
                         handle_line(v, owner_handle=e.dxf.handle)

@@ -4,6 +4,26 @@ import traceback
 import re
 import unicodedata
 
+def is_invisible(e):
+    """DXFの`invisible`属性（グループコード60、1=非表示）が立っている
+    エンティティかを返す。CADソフト上で「非表示」に設定された図形
+    （紙面には一切表示されない）は、たとえDXFファイル中に座標・テキスト
+    として存在していても、図面枠検出・ラベル収集・領域検出のいずれの
+    対象にもしてはならない（DXF-extract-labelsの2026-09-11の横展開に伴い
+    追加。詳細はDXF-extract-labels/tests/regression/test_ref_designator.py
+    のinvisible関連テストを参照）。
+
+    呼び出し側は次の3箇所すべてでチェックする必要がある（`virtual_entities()`
+    は親INSERTのinvisible属性を継承しないため、INSERT自身のチェックを
+    省くと、INSERT自身がinvisibleでも展開後の中身は素通りしてしまう）:
+      1. 直接配置エンティティ
+      2. INSERT自身（invisibleなINSERTは中身ごと丸ごと除外する）
+      3. `virtual_entities()`で展開した仮想エンティティ（親が可視でも
+         個々の子エンティティにinvisibleが立っている場合があるため）
+    """
+    return bool(e.dxf.get('invisible', 0))
+
+
 def save_uploadedfile(uploadedfile):
     """アップロードされたファイルを一時ディレクトリに保存する"""
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploadedfile.name)[1]) as f:
