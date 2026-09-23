@@ -4,7 +4,7 @@ import traceback
 import re
 import unicodedata
 
-def is_invisible(e):
+def is_invisible(e, check_layer=True):
     """DXFの`invisible`属性（グループコード60、1=非表示）が立っている
     エンティティ、または**エンティティが所属するレイヤーがオフ/フリーズ
     されている**エンティティかを返す。CADソフト上で「非表示」に設定された
@@ -36,9 +36,19 @@ def is_invisible(e):
     「非表示ではない」側にフォールバックする（誤って全除外にならないよう
     保守的に扱う）。詳細はDXF-extract-labels/tests/regression/
     test_ref_designator.pyのレイヤーoff/frozen関連テストを参照。
+
+    `check_layer=False`（2026-09-23、DXF-extract-labelsからの横展開追加）:
+    レイヤー単位の判定をスキップし、エンティティ自身の`invisible`属性のみを
+    見る。唯一のタイトルブロックがoff/frozenレイヤーに置かれている図面
+    （`EE5322-455-02A.dxf`/`-18A.dxf`）で、図番・タイトル・図面枠の手がかりが
+    表示中のエンティティだけでは1件も見つからない場合の**フォールバック
+    探索**でのみ使う。既定の`True`では従来通りの判定を行う。
     """
     if bool(e.dxf.get('invisible', 0)):
         return True
+
+    if not check_layer:
+        return False
 
     layer_name = e.dxf.get('layer', None)
     doc = getattr(e, 'doc', None)
