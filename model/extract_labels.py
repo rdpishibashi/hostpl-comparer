@@ -184,7 +184,8 @@ def is_single_uppercase_letter(text: str) -> bool:
     return False
 
 
-def _titleblock_frame_bbox(doc, group_handle, frame_lineweight=100, frame_color=7, margin=1.0):
+def _titleblock_frame_bbox(doc, group_handle, frame_lineweight=100, frame_color=7, margin=1.0,
+                            check_layer=True):
     """タイトルブロック（INSERT）が持つ図面枠のバウンディングボックスを返す。
 
     機器符号抽出（ref_designator.py）と同じ識別キー（lineweight=100 かつ color=7 の
@@ -192,6 +193,11 @@ def _titleblock_frame_bbox(doc, group_handle, frame_lineweight=100, frame_color=
     で展開・ワールド座標変換済み）のみを見るため、同一座標に重なった旧・現行の
     タイトルブロックがあっても自身の枠だけを対象にできる。検出できない場合は None
     （呼び出し側は枠外判定をスキップし、従来どおり内容ベースの判定にフォールバックする）。
+
+    `check_layer=False`（2026-09-23追加）: `is_invisible()` のレイヤー単位判定を
+    スキップする。唯一のタイトルブロックがoff/frozenレイヤーに置かれている図面の
+    フォールバック探索（`extract_labels()` 参照）で、そのタイトルブロック自身の
+    枠を検出できるようにするため。
     """
     if doc is None or not group_handle:
         return None
@@ -204,12 +210,12 @@ def _titleblock_frame_bbox(doc, group_handle, frame_lineweight=100, frame_color=
                     break
             if insert_entity is not None:
                 break
-        if insert_entity is None or is_invisible(insert_entity):
+        if insert_entity is None or is_invisible(insert_entity, check_layer=check_layer):
             return None
 
         xs, ys = [], []
         for v in insert_entity.virtual_entities():
-            if is_invisible(v):
+            if is_invisible(v, check_layer=check_layer):
                 continue
             if v.dxftype() == 'LINE':
                 if getattr(v.dxf, 'lineweight', None) == frame_lineweight and getattr(v.dxf, 'color', None) == frame_color:
@@ -247,6 +253,7 @@ def extract_title_and_subtitle(
     drawing_numbers: Optional[List[Tuple]],
     main_drawing_group=None,
     doc=None,
+    check_layer=True,
 ) -> Dict[str, Optional[str]]:
     """テキストラベルの位置関係からタイトルとサブタイトルを抽出する。
 
@@ -264,6 +271,11 @@ def extract_title_and_subtitle(
     除外する（`_is_titleblock_noise_label`）。doc 省略時・枠検出不能時は枠外
     判定を行わず、数字のみラベルの除外のみ行う（内容ベースの判定に安全側で
     フォールバック）。
+
+    `check_layer=False`（2026-09-23追加）: `_titleblock_frame_bbox()` に渡し、
+    レイヤー単位のoff/frozen判定をスキップさせる。唯一のタイトルブロックが
+    off/frozenレイヤーに置かれている図面のフォールバック探索でのみ使う
+    （`extract_labels()` 参照）。
     """
     if not all_labels:
         return {'title': None, 'subtitle': None}
@@ -299,7 +311,7 @@ def extract_title_and_subtitle(
     # タイトル候補を収集（TITLE の右側かつ REVISION より下）
     title_proximity_x = extraction_config.TITLE_PROXIMITY_X
     title_candidates = []
-    frame_bbox = _titleblock_frame_bbox(doc, main_drawing_group)
+    frame_bbox = _titleblock_frame_bbox(doc, main_drawing_group, check_layer=check_layer)
 
     for label, coords in all_labels:
         label_upper = label.upper().strip()
@@ -540,6 +552,121 @@ def determine_drawing_number_types(
     return {'main_drawing': main_drawing, 'source_drawing': source_drawing, 'main_group': main_group}
 
 
+def _entity_handle(entity):
+    return getattr(entity.dxf, 'handle', None)
+
+
+def _collect_text_entities(doc, msp, selected_layers, check_layer=True):
+    """MODEL_SPACE・PAPER_SPACE・INSERT展開の全経路からTEXT/MTEXTエンティティを
+    収集する（重複除去はしない）。戻り値は `[(entity, group_key), ...]`。
+    group_key は所属タイトルブロック（INSERT）の識別子（INSERT 由来は親 INSERT
+    の handle、直接配置は自身の handle）。
+
+    `check_layer=False`（2026-09-23追加）: `is_invisible()` のレイヤー単位
+    off/frozen判定をスキップする（エンティティ自身の`invisible`属性のみで
+    判定）。`extract_labels()` のフォールバック探索（唯一のタイトルブロックが
+    off/frozenレイヤーに置かれている図面向け）でのみ `False` を渡す。
+    """
+    all_entities_to_process = []
+
+    # MODEL_SPACE
+    for e in msp:
+        if is_invisible(e, check_layer=check_layer):
+            continue
+        if e.dxftype() in ['TEXT', 'MTEXT']:
+            all_entities_to_process.append((e, _entity_handle(e)))
+
+    # PAPER_SPACE（Model 以外のレイアウト）
+    try:
+        for layout in doc.layouts:
+            if layout.name != 'Model':
+                for e in layout:
+                    if is_invisible(e, check_layer=check_layer):
+                        continue
+                    if e.dxftype() in ['TEXT', 'MTEXT']:
+                        all_entities_to_process.append((e, _entity_handle(e)))
+    except Exception:
+        pass
+
+    # INSERT エンティティを virtual_entities() で展開（座標変換を含む）
+    block_text_cache = {}
+    try:
+        for e in msp:
+            if e.dxftype() == 'INSERT' and e.dxf.layer in selected_layers:
+                if is_invisible(e, check_layer=check_layer):
+                    continue
+                if not _block_has_text_content(doc, e.dxf.name, block_text_cache):
+                    continue
+                insert_group = _entity_handle(e)
+                try:
+                    for virtual_entity in e.virtual_entities():
+                        if is_invisible(virtual_entity, check_layer=check_layer):
+                            continue
+                        if virtual_entity.dxftype() in ['TEXT', 'MTEXT']:
+                            all_entities_to_process.append((virtual_entity, insert_group))
+                except Exception:
+                    pass
+
+        for layout in doc.layouts:
+            if layout.name != 'Model':
+                for e in layout:
+                    if e.dxftype() == 'INSERT' and e.dxf.layer in selected_layers:
+                        if is_invisible(e, check_layer=check_layer):
+                            continue
+                        if not _block_has_text_content(doc, e.dxf.name, block_text_cache):
+                            continue
+                        insert_group = _entity_handle(e)
+                        try:
+                            for virtual_entity in e.virtual_entities():
+                                if is_invisible(virtual_entity, check_layer=check_layer):
+                                    continue
+                                if virtual_entity.dxftype() in ['TEXT', 'MTEXT']:
+                                    all_entities_to_process.append((virtual_entity, insert_group))
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
+    return all_entities_to_process
+
+
+def _dedup_text_entities(entities_with_group):
+    """同一種・同一レイヤー・同一座標のエンティティを除去する。"""
+    seen_entities = set()
+    unique_entities = []
+    for e, group_key in entities_with_group:
+        try:
+            entity_key = (
+                e.dxftype(),
+                e.dxf.layer if hasattr(e.dxf, 'layer') else '',
+                getattr(e.dxf, 'insert', (0, 0)) if hasattr(e.dxf, 'insert') else (0, 0),
+            )
+            if entity_key not in seen_entities:
+                seen_entities.add(entity_key)
+                unique_entities.append((e, group_key))
+        except Exception:
+            unique_entities.append((e, group_key))
+    return unique_entities
+
+
+def _build_label_and_drawing_number_candidates(unique_entities, selected_layers,
+                                                collect_drawing_numbers=True):
+    """テキスト抽出を行い、`(clean_text, coordinates, group_key)` のラベル一覧
+    と図番候補一覧を返す（図番・タイトル判定専用。`extract_labels()` の
+    フォールバック探索〈2026-09-23〉で使用）。"""
+    all_labels_with_coords = []
+    drawing_number_candidates = []
+    for e, group_key in unique_entities:
+        if e.dxf.layer in selected_layers:
+            _, clean_text, coordinates = extract_text_from_entity(e)
+            if clean_text:
+                all_labels_with_coords.append((clean_text, coordinates, group_key))
+                if collect_drawing_numbers:
+                    for dn in extract_drawing_numbers(clean_text):
+                        drawing_number_candidates.append((dn, coordinates, group_key))
+    return all_labels_with_coords, drawing_number_candidates
+
+
 def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=False,
                    selected_layers=None, validate_ref_designators=False,
                    extract_drawing_numbers_option=False, extract_title_option=False,
@@ -576,103 +703,18 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         drawing_number_candidates = []
         all_labels_with_coords = []
 
-        # エンティティ収集
+        # エンティティ収集（表示中のみ、check_layer=True）
         # 各要素は (entity, group_key)。group_key は所属タイトルブロック（INSERT）の
         # 識別子。INSERT 由来は親 INSERT の handle、直接配置は自身の handle を使う。
         # 旧・現行のタイトルブロックが同一座標に重なっているケースで、図番と流用元
         # 図番が同じブロックに属することを判定するために用いる。
-        all_entities_to_process = []
+        entities_visible = _collect_text_entities(doc, msp, selected_layers, check_layer=True)
+        unique_entities = _dedup_text_entities(entities_visible)
 
-        def _entity_handle(entity):
-            return getattr(entity.dxf, 'handle', None)
-
-        # MODEL_SPACE
-        # invisible属性（非表示設定）が立ったエンティティは紙面に一切表示されない
-        # ため、直接配置・INSERT展開いずれの経路でも収集対象から除外する
-        # （common_utils.is_invisibleのdocstring参照）。
-        for e in msp:
-            if is_invisible(e):
-                continue
-            if e.dxftype() in ['TEXT', 'MTEXT']:
-                all_entities_to_process.append((e, _entity_handle(e)))
-
-        # PAPER_SPACE（Model 以外のレイアウト）
-        try:
-            for layout in doc.layouts:
-                if layout.name != 'Model':
-                    for e in layout:
-                        if is_invisible(e):
-                            continue
-                        if e.dxftype() in ['TEXT', 'MTEXT']:
-                            all_entities_to_process.append((e, _entity_handle(e)))
-        except Exception:
-            pass
-
-        # INSERT エンティティを virtual_entities() で展開（座標変換を含む）
-        # 展開後の仮想エンティティには親 INSERT の handle をグループキーとして付与する。
-        # テキストを含まないブロック（手描き回路図のコネクタ等の記号で多い）は
-        # virtual_entities() を呼ぶ前にスキップし、無駄な展開コストを避ける。
-        # INSERT自身がinvisibleなら中身ごと丸ごと除外し（virtual_entities()は親の
-        # invisible属性を継承しないため明示チェックが必要）、展開後の個々の仮想
-        # エンティティにもinvisibleが立っている場合があるため、そちらも個別に除外する。
-        block_text_cache = {}
-        try:
-            for e in msp:
-                if e.dxftype() == 'INSERT' and e.dxf.layer in selected_layers:
-                    if is_invisible(e):
-                        continue
-                    if not _block_has_text_content(doc, e.dxf.name, block_text_cache):
-                        continue
-                    insert_group = _entity_handle(e)
-                    try:
-                        for virtual_entity in e.virtual_entities():
-                            if is_invisible(virtual_entity):
-                                continue
-                            if virtual_entity.dxftype() in ['TEXT', 'MTEXT']:
-                                all_entities_to_process.append((virtual_entity, insert_group))
-                    except Exception:
-                        pass
-
-            for layout in doc.layouts:
-                if layout.name != 'Model':
-                    for e in layout:
-                        if e.dxftype() == 'INSERT' and e.dxf.layer in selected_layers:
-                            if is_invisible(e):
-                                continue
-                            if not _block_has_text_content(doc, e.dxf.name, block_text_cache):
-                                continue
-                            insert_group = _entity_handle(e)
-                            try:
-                                for virtual_entity in e.virtual_entities():
-                                    if is_invisible(virtual_entity):
-                                        continue
-                                    if virtual_entity.dxftype() in ['TEXT', 'MTEXT']:
-                                        all_entities_to_process.append((virtual_entity, insert_group))
-                            except Exception:
-                                pass
-        except Exception:
-            pass
-
-        # 重複除去（同一種・同一レイヤー・同一座標）
-        seen_entities = set()
-        unique_entities = []
-        for e, group_key in all_entities_to_process:
-            try:
-                entity_key = (
-                    e.dxftype(),
-                    e.dxf.layer if hasattr(e.dxf, 'layer') else '',
-                    getattr(e.dxf, 'insert', (0, 0)) if hasattr(e.dxf, 'insert') else (0, 0),
-                )
-                if entity_key not in seen_entities:
-                    seen_entities.add(entity_key)
-                    unique_entities.append((e, group_key))
-            except Exception:
-                unique_entities.append((e, group_key))
-
-        del all_entities_to_process
-        del seen_entities
-
-        # テキスト抽出
+        # テキスト抽出（出力ラベルは常に表示中のエンティティのみを対象にする。
+        # 2026-09-23: 唯一のタイトルブロックがoff/frozenレイヤーに置かれている
+        # 図面のフォールバック探索〈後述〉を追加した後も、実際に出力するラベル
+        # は変えない方針は維持する）。
         for e, group_key in unique_entities:
             if e.dxf.layer in selected_layers:
                 raw_text, clean_text, coordinates = extract_text_from_entity(e)
@@ -689,6 +731,31 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
                     labels_with_coordinates.append((clean_text, coordinates[0], coordinates[1]))
 
         info["total_extracted"] = len(labels)
+
+        # フォールバック（2026-09-23）: 表示中のエンティティだけでは図番候補・
+        # タイトル判定用ラベルが1件も見つからない場合に限り、レイヤーoff/frozen
+        # を無視して（＝エンティティ自身のinvisible属性のみで）再収集する。
+        # 唯一のタイトルブロックがoff/frozenレイヤーに置かれている図面
+        # （EE5322-455-02A.dxf/-18A.dxf、DXF-extract-labelsで発覚）で、図番・
+        # タイトルが一切取れなくなっていた回帰への対応。出力ラベル
+        # （labels/labels_with_coordinates、上で確定済み）は変更しない。
+        check_layer_for_title = True
+        need_fallback = (
+            (extract_drawing_numbers_option and not drawing_number_candidates)
+            or (extract_title_option and not all_labels_with_coords)
+        )
+        if need_fallback:
+            entities_all = _collect_text_entities(doc, msp, selected_layers, check_layer=False)
+            if len(entities_all) > len(entities_visible):
+                unique_entities_all = _dedup_text_entities(entities_all)
+                fallback_all_labels, fallback_drawing_numbers = \
+                    _build_label_and_drawing_number_candidates(
+                        unique_entities_all, selected_layers,
+                        collect_drawing_numbers=extract_drawing_numbers_option)
+                if fallback_all_labels:
+                    all_labels_with_coords = fallback_all_labels
+                    drawing_number_candidates = fallback_drawing_numbers
+                    check_layer_for_title = False
 
         # 図面番号の判別
         main_drawing_group = None
@@ -711,6 +778,7 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
                 drawing_numbers=drawing_number_candidates if extract_drawing_numbers_option else None,
                 main_drawing_group=main_drawing_group,
                 doc=doc,
+                check_layer=check_layer_for_title,
             )
             info["title"] = title_info['title']
             info["subtitle"] = title_info['subtitle']

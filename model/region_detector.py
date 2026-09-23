@@ -102,9 +102,15 @@ def _is_continuous_linetype(e, doc):
     return lt == 'CONTINUOUS'
 
 
-def _collect_region_geometry(msp, cfg):
+def _collect_region_geometry(msp, cfg, check_layer=True):
     """msp を1回走査し、INSERT も展開して、図面枠線・領域境界線・テキスト・
-    接続点（CIRCLE を含むブロックの INSERT 位置）を収集する。"""
+    接続点（CIRCLE を含むブロックの INSERT 位置）を収集する。
+
+    `check_layer=False`（2026-09-23追加）: `is_invisible()` のレイヤー単位
+    off/frozen判定をスキップする。唯一のタイトルブロック（図面枠を含む）が
+    off/frozenレイヤーに置かれている図面のフォールバック探索
+    （`analyze_dxf_regions()` 参照）でのみ `False` を渡す。
+    """
     frame_lines = []
     region_lines = []
     label_entities = []
@@ -169,7 +175,7 @@ def _collect_region_geometry(msp, cfg):
         # ため、INSERT自身がinvisibleならその中身ごと丸ごと除外する（is_invisibleの
         # docstring参照。旧版タイトルブロックが図面枠・領域境界・領域名候補として
         # 誤検出されるのを防ぐ）。
-        if is_invisible(e):
+        if is_invisible(e, check_layer=check_layer):
             continue
         t = e.dxftype()
         if t == 'LINE':
@@ -184,7 +190,7 @@ def _collect_region_geometry(msp, cfg):
                 connection_points.append((ins[0], ins[1]))
             try:
                 for v in e.virtual_entities():
-                    if is_invisible(v):
+                    if is_invisible(v, check_layer=check_layer):
                         continue
                     vt = v.dxftype()
                     if vt == 'LINE':
@@ -1664,9 +1670,23 @@ def analyze_dxf_regions(dxf_file: str, config: dict | None = None) -> dict:
         doc = ezdxf.readfile(dxf_file)
         msp = doc.modelspace()
         frame_lines, region_lines, region_lines_lp, label_entities, connection_points = \
-            _collect_region_geometry(msp, cfg)
+            _collect_region_geometry(msp, cfg, check_layer=True)
 
         frames = detect_drawing_frames(frame_lines, cfg['snap'])
+
+        # フォールバック（2026-09-23）: 表示中の図面枠が1件も見つからない場合に
+        # 限り、レイヤーoff/frozenを無視して図面枠線のみを取り直す。唯一の
+        # タイトルブロック（図面枠を含む）がoff/frozenレイヤーに置かれている
+        # 図面（EE5322-455-02A.dxf/-18A.dxf、DXF-extract-labelsで発覚）で、
+        # 領域検出自体が実施できなくなっていた回帰への対応。
+        # **region_lines・label_entities・connection_points は表示中
+        # （上で取得済み）のまま変更しない**。
+        if not frames:
+            fb_frame_lines, _, _, _, _ = _collect_region_geometry(msp, cfg, check_layer=False)
+            fb_frames = detect_drawing_frames(fb_frame_lines, cfg['snap'])
+            if fb_frames:
+                frames = fb_frames
+
         result['frames'] = frames
         if not frames:
             result['error'] = ('図面枠（太さ %d の線で囲まれた枠）が見つかりませんでした。'

@@ -380,8 +380,14 @@ def _format_block_names(doc, frame_lineweight: int, frame_color: int = _FRAME_CO
     return names
 
 
-def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FRAME_COLOR):
+def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FRAME_COLOR,
+                               check_layer: bool = True):
     """図面枠線と、フォーマットブロック由来を除いたラベルエンティティを収集する。
+
+    `check_layer=False`（2026-09-23追加）: `is_invisible()` のレイヤー単位
+    off/frozen判定をスキップする。唯一のタイトルブロック（図面枠を含む）が
+    off/frozenレイヤーに置かれている図面のフォールバック探索
+    （`collect_in_frame_labels()` 参照）でのみ `False` を渡す。
 
     戻り値: (frame_lines, label_entities)
       frame_lines: [(start, end), ...]（Vec3のまま。detect_drawing_frames に渡す）
@@ -403,7 +409,7 @@ def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FR
         # ため、INSERT自身がinvisibleならその中身ごと丸ごと除外する（is_invisibleの
         # docstring参照。旧版タイトルブロックが機器符号・図面枠として誤検出される
         # のを防ぐ）。
-        if is_invisible(e):
+        if is_invisible(e, check_layer=check_layer):
             continue
         t = e.dxftype()
         if t == 'LINE':
@@ -418,7 +424,7 @@ def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FR
                 # 枠外位置記号）は丸ごと除外する
                 try:
                     for v in e.virtual_entities():
-                        if is_invisible(v):
+                        if is_invisible(v, check_layer=check_layer):
                             continue
                         if v.dxftype() == 'LINE' and is_frame_line(v):
                             frame_lines.append((v.dxf.start, v.dxf.end))
@@ -429,7 +435,7 @@ def _collect_frame_and_labels(doc, frame_lineweight: int, frame_color: int = _FR
                     continue
                 try:
                     for v in e.virtual_entities():
-                        if is_invisible(v):
+                        if is_invisible(v, check_layer=check_layer):
                             continue
                         if v.dxftype() in ('TEXT', 'MTEXT'):
                             label_entities.append(v)
@@ -459,8 +465,25 @@ def collect_in_frame_labels(
         result['error'] = f'DXFファイルの読み込みに失敗しました: {e}'
         return result
 
-    frame_lines, label_entities = _collect_frame_and_labels(doc, frame_lineweight, frame_color)
+    frame_lines, label_entities = _collect_frame_and_labels(
+        doc, frame_lineweight, frame_color, check_layer=True)
     frames = detect_drawing_frames(frame_lines, snap)
+
+    # フォールバック（2026-09-23）: 表示中の図面枠が1件も見つからない場合に
+    # 限り、レイヤーoff/frozenを無視して図面枠線のみを取り直す。唯一の
+    # タイトルブロック（図面枠を含む）がoff/frozenレイヤーに置かれている
+    # 図面（EE5322-455-02A.dxf/-18A.dxf、DXF-extract-labelsで発覚）で、図面枠
+    # 自体が検出できなくなっていた回帰への対応。**出力ラベル（label_entities、
+    # 上で取得済み）は変更しない**——タイトルブロックはフォーマットブロックと
+    # して構造的にテキストを除外済みのため、フォールバックで枠だけを取り直
+    # しても非表示テキストが混入することはない。
+    if not frames:
+        fb_frame_lines, _ = _collect_frame_and_labels(
+            doc, frame_lineweight, frame_color, check_layer=False)
+        fb_frames = detect_drawing_frames(fb_frame_lines, snap)
+        if fb_frames:
+            frames = fb_frames
+
     result['frames'] = frames
 
     if not frames:
@@ -493,7 +516,13 @@ def collect_in_frame_labels(
 
 def _collect_all_labels_fallback(dxf_file: str) -> List[Tuple[str, float, float]]:
     """図面枠が検出できない場合のフォールバック: 図面枠フィルタなしで
-    ファイル全体（modelspace）のラベルを収集する。"""
+    ファイル全体（modelspace）のラベルを収集する。
+
+    非表示エンティティ（invisible属性・レイヤーoff/frozen）は除外する
+    （2026-09-23追加。従来この経路にはis_invisible()チェックが無く、図面枠が
+    検出できずこのフォールバックに落ちた図面で、非表示のタイトルブロックの
+    文字が出力ラベルに混入していた。直接配置・INSERT自身・virtual_entities
+    展開後の3箇所すべてでチェックする）。"""
     try:
         doc = ezdxf.readfile(dxf_file)
     except Exception:
@@ -502,6 +531,8 @@ def _collect_all_labels_fallback(dxf_file: str) -> List[Tuple[str, float, float]
     text_block_cache = {}
     out = []
     for e in msp:
+        if is_invisible(e):
+            continue
         t = e.dxftype()
         if t in ('TEXT', 'MTEXT'):
             _, clean_text, (x, y) = extract_text_from_entity(e)
@@ -512,6 +543,8 @@ def _collect_all_labels_fallback(dxf_file: str) -> List[Tuple[str, float, float]
                 continue
             try:
                 for v in e.virtual_entities():
+                    if is_invisible(v):
+                        continue
                     if v.dxftype() in ('TEXT', 'MTEXT'):
                         _, clean_text, (x, y) = extract_text_from_entity(v)
                         if clean_text:
