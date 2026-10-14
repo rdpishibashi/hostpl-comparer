@@ -1,18 +1,62 @@
 import os
 import tempfile
-import traceback
 import re
 import unicodedata
+
+def select_layout_result(doc, collect_from_layout, is_empty):
+    """Model Space を優先し、`collect_from_layout(layout)` の結果が
+    `is_empty(result)` を満たす（＝空）場合のみ Model 以外のレイアウトを
+    順に試す共通ヘルパー。**同一レイアウト内で完結した収集結果のみを返す**
+    （レイアウトをまたいで混在させない）。
+
+    Model Space と Paper Space は完全に独立した座標系であり、一方の
+    レイアウトで見つけた図面枠のbboxを、別レイアウトのラベル・図形に対する
+    「枠内か」の判定に使うと、座標が対応せず正しい要素が誤って除外される
+    （`EE6892-455B.dxf`: 図面枠はPaper Space〈`ICADSX Layout`〉のみに存在する
+    一方、実際の機器符号ラベル`CB001`等はModel Spaceにあり、Paper Space
+    由来の枠bboxでModel Spaceのラベルをフィルタすると大半が「枠外」と誤判定
+    され出力から消える不具合が発生した。2026-07-14ユーザー報告。
+    `region_detector.py`・`ref_designator.py`・`terminal_detector.py` の
+    3モジュールに共通する設計方針のため、ここに集約する。2026-07-26、
+    region_detector.py から common_utils.py へ移設——ジオメトリ・領域検出
+    ロジックに依存しない汎用ヘルパーであり、3モジュールの共通依存先として
+    ドメイン特化モジュールより common_utils.py の方が適切なため）。
+
+    Args:
+        doc: ezdxf Document
+        collect_from_layout: layout を受け取り、その1レイアウトに閉じた
+            収集結果を返す関数（呼び出し側で定義する。戻り値の型は自由）
+        is_empty: collect_from_layout の戻り値を受け取り、「内容が空か」を
+            判定する関数
+    """
+    result = collect_from_layout(doc.modelspace())
+    if not is_empty(result):
+        return result
+
+    try:
+        for layout in doc.layouts:
+            if layout.name != 'Model':
+                alt_result = collect_from_layout(layout)
+                if not is_empty(alt_result):
+                    return alt_result
+    except Exception:
+        pass
+
+    return result
 
 def is_invisible(e, check_layer=True):
     """DXFの`invisible`属性（グループコード60、1=非表示）が立っている
     エンティティ、または**エンティティが所属するレイヤーがオフ/フリーズ
     されている**エンティティかを返す。CADソフト上で「非表示」に設定された
     図形（紙面には一切表示されない）は、たとえDXFファイル中に座標・テキスト
-    として存在していても、図面枠検出・ラベル収集・領域検出のいずれの
-    対象にもしてはならない（DXF-extract-labelsの2026-09-11の横展開に伴い
-    追加。詳細はDXF-extract-labels/tests/regression/test_ref_designator.py
-    のinvisible関連テストを参照）。
+    として存在していても、図面枠検出・ラベル収集・領域検出・端子検出の
+    いずれの対象にもしてはならない（2026-09-10、ユーザー報告により
+    `ref_designator.py`に追加。ULVAC標準の改版運用では、旧版のタイトル
+    ブロックを削除せずinvisibleにして履歴として保持する例があるため、
+    他の収集経路でも起こりうる不具合として2026-09-11、region_detector.py・
+    terminal_detector.py・extract_labels.pyへも横展開し、この共通ヘルパーに
+    集約した。詳細は`tests/regression/test_ref_designator.py`の
+    invisible関連テストを参照）。
 
     呼び出し側は次の3箇所すべてでチェックする必要がある（`virtual_entities()`
     は親INSERTのinvisible属性を継承しないため、INSERT自身のチェックを
@@ -22,27 +66,31 @@ def is_invisible(e, check_layer=True):
       3. `virtual_entities()`で展開した仮想エンティティ（親が可視でも
          個々の子エンティティにinvisibleが立っている場合があるため）
 
-    レイヤー単位の非表示状態（DXF-extract-labels 2026-09-16の横展開に伴い追加）:
+    レイヤー単位の非表示状態（2026-09-16、ユーザー報告により追加）:
     エンティティ自身の`invisible`属性が立っていなくても、そのエンティティが
     置かれたレイヤー自体が「オフ」または「フリーズ」されていれば、画面上
     ・印刷時ともに一切表示されない。ULVAC標準の改版運用では、旧版の
     タイトルブロックをエンティティ単位のinvisible属性ではなく、専用レイヤー
     ごとオフ/フリーズして非表示にする例があり、この場合は上記の`invisible`
-    属性チェックだけでは検出できない。`virtual_entities()`で展開した仮想
-    エンティティも`.doc`経由で元のレイヤーテーブルを参照できるため、同じ
-    チェックで対応できる（`.layer`属性は展開後も元のレイヤー名を保持し、
-    親INSERTのレイヤー状態を継承しない`invisible`属性とは異なる）。
-    レイヤーテーブルに存在しない・`.doc`が取得できない等の異常系は
-    「非表示ではない」側にフォールバックする（誤って全除外にならないよう
-    保守的に扱う）。詳細はDXF-extract-labels/tests/regression/
-    test_ref_designator.pyのレイヤーoff/frozen関連テストを参照。
+    属性チェックだけでは検出できない（実データ`EE3273-039-90B.dxf`で確認:
+    旧タイトルブロック一式が`off=True, frozen=True`のレイヤーに置かれており、
+    現在は存在しない図番「EE3273-039-90A」が誤って抽出されていた）。
+    `virtual_entities()`で展開した仮想エンティティも`.doc`経由で元のレイヤー
+    テーブルを参照できるため、同じチェックで対応できる（`.layer`属性は
+    展開後も元のレイヤー名を保持し、親INSERTのレイヤー状態を継承しない
+    `invisible`属性とは異なる——仮想エンティティ自身のレイヤー参照だけで
+    正しく判定できる）。レイヤーテーブルに存在しない・`.doc`が取得できない
+    等の異常系は「非表示ではない」側にフォールバックする（誤って全除外に
+    ならないよう保守的に扱う）。
 
-    `check_layer=False`（2026-09-23、DXF-extract-labelsからの横展開追加）:
-    レイヤー単位の判定をスキップし、エンティティ自身の`invisible`属性のみを
-    見る。唯一のタイトルブロックがoff/frozenレイヤーに置かれている図面
-    （`EE5322-455-02A.dxf`/`-18A.dxf`）で、図番・タイトル・図面枠の手がかりが
-    表示中のエンティティだけでは1件も見つからない場合の**フォールバック
-    探索**でのみ使う。既定の`True`では従来通りの判定を行う。
+    `check_layer=False`（2026-09-23追加）: レイヤー単位の判定をスキップし、
+    エンティティ自身の`invisible`属性のみを見る。表示中のエンティティだけで
+    図番・図面枠等の手がかりが1件も見つからない場合の**フォールバック探索**
+    でのみ使う（唯一のタイトルブロックがoff/frozenレイヤーに置かれている
+    図面では、レイヤー単位の判定を常時適用すると図番・タイトル・図面枠が
+    一切検出できなくなるため。実データ`EE5322-455-02A.dxf`/`-18A.dxf`で
+    確認、2026-09-16のレイヤー単位判定追加が原因の回帰）。既定の`True`では
+    従来通りの判定を行う。
     """
     if bool(e.dxf.get('invisible', 0)):
         return True
@@ -80,13 +128,6 @@ def normalize_width(text):
     if not text:
         return text
     return unicodedata.normalize('NFKC', text)
-
-def handle_error(e, show_traceback=True):
-    """エラーを適切に処理して表示する"""
-    import streamlit as st
-    st.error(f"エラーが発生しました: {str(e)}")
-    if show_traceback:
-        st.error(traceback.format_exc())
 
 def filter_non_circuit_symbols(labels, debug=False):
     """
@@ -160,7 +201,7 @@ def process_circuit_symbol_labels(labels, filter_non_parts=False, validate_ref_d
         labels: 処理対象のラベルリスト
         filter_non_parts: 機器符号以外のラベルをフィルタリングするかどうか
         validate_ref_designators: 未使用（機器符号妥当性チェック機能は v1.6.0 で削除）。
-            `utils/extract_labels.py`（DXF-diff-manager とバイト一致コピーを維持する
+            `model/extract_labels.py`（DXF-diff-manager とバイト一致コピーを維持する
             共有ファイル）がこの引数を渡し続けるため、シグネチャ互換のためだけに残す。
         debug: デバッグ情報を表示するかどうか
 

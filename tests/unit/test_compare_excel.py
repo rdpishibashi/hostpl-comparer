@@ -63,3 +63,27 @@ def test_create_comparison_excel_output_with_no_frame_filenames_section():
 
     assert isinstance(output, bytes)
     assert len(output) > 0
+
+
+def _summary_cells(excel_bytes):
+    import io
+    import openpyxl
+    ws = openpyxl.load_workbook(io.BytesIO(excel_bytes))['サマリー']
+    return [c.value for row in ws.iter_rows() for c in row if c.value is not None]
+
+
+def test_summary_shows_region_mode_scopes_only_when_on():
+    """指定領域で比較: ONのときだけ、サマリーに「指定領域で比較」「除外した領域」と
+    図番ごとのDXF側の対象範囲が出る。OFF（キー無し）では出力は従来と同じ。"""
+    off = _summary_cells(create_comparison_excel_output(_minimal_result()))
+    assert '指定領域で比較' not in off and 'DXF側の対象範囲（図番ごと）' not in off
+
+    on = _summary_cells(create_comparison_excel_output(_minimal_result(
+        region_mode=True, excluded_regions=['AREA B'],
+        dxf_scopes={'EE0001-000-01A': ('特定領域', ['AREA A', 'AREA C']),
+                    'EE0001-000-02A': ('図面全体', [])},
+    )))
+    assert '指定領域で比較' in on and '除外した領域' in on and 'AREA B' in on
+    assert 'DXF側の対象範囲（図番ごと）' in on
+    assert 'EE0001-000-01A：特定領域（AREA A、AREA C）' in on
+    assert 'EE0001-000-02A：図面全体' in on
