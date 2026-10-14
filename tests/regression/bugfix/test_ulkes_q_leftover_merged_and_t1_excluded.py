@@ -72,5 +72,5 @@ def test_all_row_styles_have_light_colors():
     assert set(ROW_STYLE_COLORS) == {"DXF_ONLY", "ULKES_ONLY", "MISMATCH", "MATCH"}
     assert ROW_STYLE_COLORS["MATCH"]["bg_color"] == "#EAF7EC"
     assert ROW_STYLE_COLORS["MISMATCH"]["bg_color"] == "#FFF6D5"
-    assert ROW_STYLE_COLORS["DXF_ONLY"]["bg_color"] == "#FCE4EC"
+    assert ROW_STYLE_COLORS["DXF_ONLY"]["bg_color"] == "#FEF1F5"
     assert ROW_STYLE_COLORS["ULKES_ONLY"]["bg_color"] == "#EAF1FB"

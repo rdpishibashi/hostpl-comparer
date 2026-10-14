@@ -49,7 +49,7 @@ ROW_STYLE_ULKES_ONLY = 'ULKES_ONLY'
 ROW_STYLE_MISMATCH = 'MISMATCH'
 ROW_STYLE_MATCH = 'MATCH'
 
-COLOR_DXF_ONLY = {'bg_color': '#FCE4EC', 'font_color': '#9C0006'}     # 薄いピンク
+COLOR_DXF_ONLY = {'bg_color': '#FEF1F5', 'font_color': '#9C0006'}     # 薄いピンク
 COLOR_ULKES_ONLY = {'bg_color': '#EAF1FB', 'font_color': '#1F4E79'}   # 薄い青
 COLOR_MISMATCH = {'bg_color': '#FFF6D5', 'font_color': '#9C6500'}     # 薄い黄
 COLOR_MATCH = {'bg_color': '#EAF7EC', 'font_color': '#006100'}        # 薄い緑
