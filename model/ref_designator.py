@@ -37,7 +37,7 @@ from .region_detector import detect_drawing_frames, assign_region_labels
 # EXCLUSION_*_CATEGORIES / CONFIRMED_PATTERN_CATEGORIES）を変更したら上げる。
 # 判断ログ（utils/decision_log.py）の patterns_version 列に記録され、
 # 「パターン更新後もまだ手動判断され続けているラベル」の特定に使う。
-PATTERNS_VERSION = '1.7.2'
+PATTERNS_VERSION = '1.7.3'
 
 
 # ============================================================
@@ -138,6 +138,11 @@ EXCLUSION_EXACT_CATEGORIES = {
     'titleblock_terms': (_TITLEBLOCK_TERMS, '図面情報枠内のタイトル項目'),
 }
 
+# 比較側（compare_symbols.rescue_by_ulkes_prefix）が参照するカテゴリ名。
+# このカテゴリは英字プレフィックスによる救済の対象にせず、ULKES側に完全一致する
+# 符号がある場合のみ救済する（T1 がULKESの T01 等のプレフィックス一致で復活しないように）。
+OTHER_SHORT_CATEGORY = 'single_letter_digits_other'
+
 # (カテゴリ名, 正規表現, 説明)。
 EXCLUSION_REGEX_CATEGORIES = [
     ('single_letter_position', re.compile(r'^[A-Z]$'),
@@ -166,6 +171,10 @@ EXCLUSION_REGEX_CATEGORIES = [
     ('wiring_digit_run', re.compile(r'.*[0-9]{4,}'),
      '数字が4桁以上連続する配線ラベル（例 W1234, CN2345。ハイフン等で分断された'
      '数字は対象外。2026-07-11 ユーザー指定）'),
+    (OTHER_SHORT_CATEGORY, re.compile(r'^[BDEGHIJKMNOPRSTVWXYZ][0-9]{1,2}$'),
+     'A・C・L・Q・U・F 以外の英大文字1字+数字1〜2桁（例 R10,T1,N24）。'
+     'DXF-extract-labels の label_classifier.OTHER_PATTERNS と同じ'
+     '（2026-10-14 移植）'),
 ]
 
 

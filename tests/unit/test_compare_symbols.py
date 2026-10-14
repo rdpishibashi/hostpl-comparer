@@ -152,9 +152,9 @@ def test_transfer_promotes_different_dxf_symbol_sharing_prefix():
     assert not (df['符号'] == 'CNCB001W?').any()  # 完全に消費されたので余りは残らない
 
 
-def test_transfer_leftover_uses_source_symbol_name_when_no_dxf_candidate():
-    """組み合わせ表#5: 振替先となる別のDXF符号が無ければ、補完元の機器符号名+
-    『?』の1行がULKESのみとして残る。"""
+def test_transfer_leftover_merges_into_source_row_when_no_dxf_candidate():
+    """組み合わせ表#5: 振替先となる別のDXF符号が無く補完元自身がDXFにもある場合、
+    余りは『X?』行にせず補完元の行のULKES個数に加算する（2026-10-14）。"""
     ulkes_symbols = _ulkes_symbols_for_row("CNCB001W", None, 3)  # base1 + 補完2個
     dxf_counter = Counter({"CNCB001W": 1})  # 同プレフィックスの他の符号は無い
 
@@ -163,16 +163,14 @@ def test_transfer_leftover_uses_source_symbol_name_when_no_dxf_candidate():
 
     matched = df[df['符号'] == 'CNCB001W'].iloc[0]
     assert matched['区分'] == '両方'
-    assert matched['ULKES個数'] == 1
-
-    leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
-    assert leftover['区分'] == 'ULKESのみ'
-    assert leftover['ULKES個数'] == 2
+    assert matched['図面個数'] == 1
+    assert matched['ULKES個数'] == 3  # 基本1 + 余り2
+    assert not (df['符号'] == 'CNCB001W?').any()
 
 
-def test_transfer_budget_exceeds_candidate_count_leaves_remainder():
+def test_transfer_budget_exceeds_candidate_count_merges_remainder_into_source():
     """組み合わせ表#6: 振替先のDXF個数を上回るbudgetは、DXF個数分だけ消費し
-    残りは補完元の機器符号名+『?』に集約される。"""
+    残りは補完元の行（DXFにもある場合）のULKES個数に加算される（2026-10-14）。"""
     ulkes_symbols = _ulkes_symbols_for_row("CNCB001W", None, 4)  # base1 + 補完3個
     dxf_counter = Counter({"CNCB001W": 1, "CNCB002X": 1})
 
@@ -184,9 +182,10 @@ def test_transfer_budget_exceeds_candidate_count_leaves_remainder():
     assert promoted['図面個数'] == 1
     assert promoted['ULKES個数'] == 1  # DXF個数(1)を上限に消費
 
-    leftover = df[df['符号'] == 'CNCB001W?'].iloc[0]
-    assert leftover['区分'] == 'ULKESのみ'
-    assert leftover['ULKES個数'] == 2  # budget(3) - 消費(1)
+    source = df[df['符号'] == 'CNCB001W'].iloc[0]
+    assert source['区分'] == '両方'
+    assert source['ULKES個数'] == 3  # 基本1 + 余り(budget3 - 消費1)
+    assert not (df['符号'] == 'CNCB001W?').any()
 
 
 def test_transfer_budget_less_than_dxf_count_leaves_yellow_mismatch():

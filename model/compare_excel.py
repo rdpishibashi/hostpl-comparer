@@ -139,8 +139,8 @@ def create_comparison_excel_output(result: dict) -> bytes:
     このresult辞書には含めないこと。
 
     シート構成: サマリー → 図番ごとのシート（`pairs` の順）。
-    符号単位比較の行は表示スタイル区分（青=図面のみ／緑=ULKESのみ／
-    黄=両方だが個数不一致／無色=両方かつ個数一致）で色分けする
+    符号単位比較の行は表示スタイル区分（薄いピンク=図面のみ／薄い青=ULKESのみ／
+    薄い黄=両方だが個数不一致／薄い緑=両方かつ個数一致）で色分けする
     （`model.compare_symbols.row_style()`）。
     """
     output = io.BytesIO()
