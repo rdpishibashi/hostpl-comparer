@@ -358,24 +358,24 @@ def _render_results():
                     )
 
     if result["ulkes_only"]:
-        st.markdown("**ULKESのみに存在する図番**")
-        st.write("、".join(result["ulkes_only"]))
+        with st.expander("ULKESのみに存在する図番", expanded=False):
+            st.write("、".join(result["ulkes_only"]))
 
     if result["no_expansion"]:
-        st.markdown("**部品リストがないULKESの図面番号**")
-        for filename, drawing_numbers in result["no_expansion"]:
-            st.write(f"{filename}：")
-            st.write("、".join(drawing_numbers))
+        with st.expander("部品リストがないULKESの図面番号", expanded=False):
+            for filename, drawing_numbers in result["no_expansion"]:
+                st.write(f"{filename}：")
+                st.write("、".join(drawing_numbers))
 
     if result["duplicate_assembly_numbers"]:
-        st.markdown("**複数回記載されているULKESの図面番号**")
-        for filename, drawing_numbers in result["duplicate_assembly_numbers"]:
-            st.write(f"{filename}：")
-            st.write("、".join(drawing_numbers))
+        with st.expander("複数回記載されているULKESの図面番号", expanded=False):
+            for filename, drawing_numbers in result["duplicate_assembly_numbers"]:
+                st.write(f"{filename}：")
+                st.write("、".join(drawing_numbers))
 
     if result["no_frame_filenames"]:
-        st.markdown("**図面枠を検出できないDXFファイル**")
-        st.write("、".join(result["no_frame_filenames"]))
+        with st.expander("図面枠を検出できないDXFファイル", expanded=False):
+            st.write("、".join(result["no_frame_filenames"]))
 
     st.divider()
     st.download_button(
