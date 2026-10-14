@@ -31,7 +31,7 @@ from model.compare_symbols import (
     ROW_STYLE_COLORS,
     compare_pair,
 )
-from model.ref_designator import is_ref_designator_candidate
+from model.label_classifier import is_ref_designator_label as is_ref_designator_candidate
 
 
 def test_leftover_merged_into_source_row_when_source_in_dxf():

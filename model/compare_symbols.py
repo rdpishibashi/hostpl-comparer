@@ -29,11 +29,7 @@ from collections import Counter
 import pandas as pd
 
 from model.extract_symbols import extract_alphabetic_part
-from model.ref_designator import (
-    OTHER_SHORT_CATEGORY,
-    _judgment_text,
-    classify_judgment_detailed,
-)
+from model.label_classifier import OTHER_PATTERNS, _judgment_text, normalize_label as _normalize_for_judgment
 
 DIFF_COLUMNS = ['符号', '区分', '図面個数', 'ULKES個数']
 
@@ -190,10 +186,10 @@ def compare_symbols(dxf_counter: Counter, ulkes_symbol_counter: Counter) -> pd.D
 
 
 def _is_other_short_label(label: str) -> bool:
-    """ラベルが `OTHER_SHORT_CATEGORY`（A・C・L・Q・U・F 以外の英大文字1字+数字
-    1〜2桁）として機器符号候補から除外されたものか。"""
-    status, category = classify_judgment_detailed(_judgment_text(label))
-    return status == 'excluded' and category == OTHER_SHORT_CATEGORY
+    """ラベルが `label_classifier.OTHER_PATTERNS`（A・C・L・Q・U・F 以外の英大文字1字+
+    数字1〜2桁。例 `R10`・`T1`）として機器符号候補から除外されるものか。"""
+    judgment = _judgment_text(_normalize_for_judgment(label))
+    return any(rx.match(judgment) for rx in OTHER_PATTERNS)
 
 
 def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
@@ -205,7 +201,7 @@ def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
     `dxf_display_counter`）に合流させ、括弧内の仕様情報を確認できるようにする
     ため（比較そのものには`compare_pair()`内で比較キーへ変換してから使う）。
 
-    ただし `OTHER_SHORT_CATEGORY` で除外されたラベル（`R10`・`T1` 等）は、プレフィックス
+    ただし `OTHER_PATTERNS` に該当して除外されたラベル（`R10`・`T1` 等）は、プレフィックス
     ではなく**比較キーがULKES側の符号と完全一致する場合のみ**救済する（2026-10-14）。
 
     プレフィックス集合はそのペアのULKES側記号だけから求める（他図番のプレフィックス

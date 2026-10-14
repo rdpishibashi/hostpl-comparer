@@ -589,6 +589,11 @@ def _collect_text_entities(doc, msp, selected_layers, check_layer=True):
         pass
 
     # INSERT エンティティを virtual_entities() で展開（座標変換を含む）
+    # テキストを含まないブロックは virtual_entities() を呼ぶ前にスキップし、
+    # 無駄な展開コストを避ける。INSERT自身が非表示なら中身ごと丸ごと除外し
+    # （virtual_entities()は親の状態を継承しないため明示チェックが必要）、
+    # 展開後の個々の仮想エンティティにも非表示が立っている場合があるため、
+    # そちらも個別に除外する。
     block_text_cache = {}
     try:
         for e in msp:
@@ -649,8 +654,7 @@ def _dedup_text_entities(entities_with_group):
     return unique_entities
 
 
-def _build_label_and_drawing_number_candidates(unique_entities, selected_layers,
-                                                collect_drawing_numbers=True):
+def _build_label_and_drawing_number_candidates(unique_entities, selected_layers):
     """テキスト抽出を行い、`(clean_text, coordinates, group_key)` のラベル一覧
     と図番候補一覧を返す（図番・タイトル判定専用。`extract_labels()` の
     フォールバック探索〈2026-09-23〉で使用）。"""
@@ -661,9 +665,8 @@ def _build_label_and_drawing_number_candidates(unique_entities, selected_layers,
             _, clean_text, coordinates = extract_text_from_entity(e)
             if clean_text:
                 all_labels_with_coords.append((clean_text, coordinates, group_key))
-                if collect_drawing_numbers:
-                    for dn in extract_drawing_numbers(clean_text):
-                        drawing_number_candidates.append((dn, coordinates, group_key))
+                for dn in extract_drawing_numbers(clean_text):
+                    drawing_number_candidates.append((dn, coordinates, group_key))
     return all_labels_with_coords, drawing_number_candidates
 
 
@@ -713,8 +716,8 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
 
         # テキスト抽出（出力ラベルは常に表示中のエンティティのみを対象にする。
         # 2026-09-23: 唯一のタイトルブロックがoff/frozenレイヤーに置かれている
-        # 図面のフォールバック探索〈後述〉を追加した後も、実際に出力するラベル
-        # は変えない方針は維持する）。
+        # 図面〈EE5322-455-02A.dxf等〉のフォールバック探索〈後述〉を追加した後も、
+        # 実際に出力するラベルは変えない方針は維持する）。
         for e, group_key in unique_entities:
             if e.dxf.layer in selected_layers:
                 raw_text, clean_text, coordinates = extract_text_from_entity(e)
@@ -723,7 +726,12 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
                     if extract_drawing_numbers_option or extract_title_option:
                         all_labels_with_coords.append((clean_text, coordinates, group_key))
 
-                    if extract_drawing_numbers_option:
+                    # タイトル抽出（extract_title_option）も、同一タイトルブロック
+                    # グループ制限（main_drawing_group、下記参照）のために図番候補を
+                    # 内部的に必要とするため、extract_drawing_numbers_option の指定に
+                    # 関わらず収集する（2026-07-29、呼び出し側の渡し忘れに強くする
+                    # ための内部結合解消。詳細は下記コメント）。
+                    if extract_drawing_numbers_option or extract_title_option:
                         for dn in extract_drawing_numbers(clean_text):
                             drawing_number_candidates.append((dn, coordinates, group_key))
 
@@ -732,50 +740,63 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
 
         info["total_extracted"] = len(labels)
 
-        # フォールバック（2026-09-23）: 表示中のエンティティだけでは図番候補・
-        # タイトル判定用ラベルが1件も見つからない場合に限り、レイヤーoff/frozen
-        # を無視して（＝エンティティ自身のinvisible属性のみで）再収集する。
-        # 唯一のタイトルブロックがoff/frozenレイヤーに置かれている図面
-        # （EE5322-455-02A.dxf/-18A.dxf、DXF-extract-labelsで発覚）で、図番・
-        # タイトルが一切取れなくなっていた回帰への対応。出力ラベル
-        # （labels/labels_with_coordinates、上で確定済み）は変更しない。
+        # フォールバック（2026-09-23）: 表示中のエンティティだけでは図番候補が
+        # 1件も見つからない場合に限り、レイヤーoff/frozenを無視して（＝
+        # エンティティ自身のinvisible属性のみで）図番・タイトル判定用の
+        # ラベル・図番候補を収集し直す。唯一のタイトルブロックがoff/frozen
+        # レイヤーに置かれている図面（EE5322-455-02A.dxf/-18A.dxf）で、
+        # 2026-09-16のレイヤー単位invisible判定追加により図番・タイトルが
+        # 一切取れなくなっていた回帰への対応。
+        #
+        # 出力ラベル（labels/labels_with_coordinates、上で確定済み）は
+        # 変更しない——フォールバックは図番・タイトル・図面枠の「手がかり」を
+        # 見つけるためだけに使い、実際に出力するラベルは常に表示中のものに限る
+        # （common_utils.is_invisibleのdocstring、Tools/CLAUDE.md参照）。
+        # `check_layer` は extract_title_and_subtitle() 経由で
+        # _titleblock_frame_bbox() にも伝播し、フォールバック時はタイトル
+        # ブロック自身の図面枠（情報枠ノイズ除外用）もoff/frozen無視で検出する。
         check_layer_for_title = True
-        need_fallback = (
-            (extract_drawing_numbers_option and not drawing_number_candidates)
-            or (extract_title_option and not all_labels_with_coords)
-        )
-        if need_fallback:
+        if (extract_drawing_numbers_option or extract_title_option) and not drawing_number_candidates:
             entities_all = _collect_text_entities(doc, msp, selected_layers, check_layer=False)
             if len(entities_all) > len(entities_visible):
                 unique_entities_all = _dedup_text_entities(entities_all)
-                fallback_all_labels, fallback_drawing_numbers = \
-                    _build_label_and_drawing_number_candidates(
-                        unique_entities_all, selected_layers,
-                        collect_drawing_numbers=extract_drawing_numbers_option)
-                if fallback_all_labels:
-                    all_labels_with_coords = fallback_all_labels
-                    drawing_number_candidates = fallback_drawing_numbers
+                fallback_labels_with_coords, fallback_drawing_number_candidates = \
+                    _build_label_and_drawing_number_candidates(unique_entities_all, selected_layers)
+                if fallback_drawing_number_candidates:
+                    all_labels_with_coords = fallback_labels_with_coords
+                    drawing_number_candidates = fallback_drawing_number_candidates
                     check_layer_for_title = False
 
         # 図面番号の判別
+        # main_drawing_group は extract_title_and_subtitle() の同一タイトルブロック
+        # グループ制限に使うため、extract_title_option=True であれば
+        # extract_drawing_numbers_option の指定に関わらず常に計算する（2026-07-29）。
+        # 以前は extract_drawing_numbers_option=True を渡し忘れると main_drawing_group
+        # が計算されずこの制限が働かず、複数タイトルブロックが1ファイルに存在する
+        # 図面（同一図番のシートが横並びで対象シートだけタイトル行が欠落している等）
+        # でタイトル/サブタイトルを誤抽出していた（DXF-diff-manager の呼び出し漏れで
+        # 実際に発生）。呼び出し側のオプション指定を尊重するため、info の公開キー
+        # （main_drawing_number/source_drawing_number/all_drawing_numbers）は
+        # 従来どおり extract_drawing_numbers_option=True のときのみ設定する。
         main_drawing_group = None
-        if extract_drawing_numbers_option and drawing_number_candidates:
+        if (extract_drawing_numbers_option or extract_title_option) and drawing_number_candidates:
             filename_for_matching = original_filename if original_filename else dxf_file
             drawing_info = determine_drawing_number_types(
                 drawing_number_candidates,
                 all_labels=all_labels_with_coords,
                 filename=filename_for_matching,
             )
-            info["main_drawing_number"] = drawing_info['main_drawing']
-            info["source_drawing_number"] = drawing_info['source_drawing']
-            info["all_drawing_numbers"] = [dn[0] for dn in drawing_number_candidates]
             main_drawing_group = drawing_info['main_group']
+            if extract_drawing_numbers_option:
+                info["main_drawing_number"] = drawing_info['main_drawing']
+                info["source_drawing_number"] = drawing_info['source_drawing']
+                info["all_drawing_numbers"] = [dn[0] for dn in drawing_number_candidates]
 
         # タイトル・サブタイトルの抽出
         if extract_title_option and all_labels_with_coords:
             title_info = extract_title_and_subtitle(
                 all_labels_with_coords,
-                drawing_numbers=drawing_number_candidates if extract_drawing_numbers_option else None,
+                drawing_numbers=drawing_number_candidates or None,
                 main_drawing_group=main_drawing_group,
                 doc=doc,
                 check_layer=check_layer_for_title,
@@ -824,6 +845,30 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         info["error"] = str(e)
         gc.collect()
         return [], info
+
+
+def get_title_and_subtitle(dxf_file, original_filename=None):
+    """DXFファイルのタイトル・サブタイトルのみを取得する軽量ラッパー。
+
+    タイトル・サブタイトルだけが必要な呼び出し元（ラベル一覧やフィルタ結果は
+    不要な場合）のための入り口。内部では `extract_labels()` を
+    `extract_drawing_numbers_option=True` と `extract_title_option=True` の
+    組み合わせで呼び出す。v1.9.22の内部結合解消により `extract_title_option=True`
+    単独でも正しく動作するようになっているが、呼び出し元がオプションの組み合わせを
+    都度考えずに済むよう、この関数を経由することを推奨する（2026-07-29追加。
+    呼び出し側のオプション指定ミスで実際に不具合が発生した経緯は
+    determine_drawing_number_types / extract_title_and_subtitle のdocstring参照）。
+
+    Returns:
+        (title, subtitle) のタプル。いずれも str または None。
+    """
+    _, info = extract_labels(
+        dxf_file,
+        extract_drawing_numbers_option=True,
+        extract_title_option=True,
+        original_filename=original_filename,
+    )
+    return info.get('title'), info.get('subtitle')
 
 
 def process_multiple_dxf_files(dxf_files, filter_non_parts=False, sort_order="asc", debug=False,

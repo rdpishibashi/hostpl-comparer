@@ -70,10 +70,12 @@ def test_end_to_end_pipeline_with_real_ee6312_data():
     # コメントが同一の行の合算を反映した実測値。詳細はセッションの引き継ぎ書
     # 「実データで確認した事実」参照）
     kubun_counts = symbol_df["区分"].value_counts().to_dict()
-    # 2026-10-14: R1/S1/T1が機器符号候補から除外され（図面のみ 33→30）、余った補完
+    # 2026-10-14（後段）: DXF処理部品をDXF-extract-labels最新版へ同期し、AWG12・L1・A1・
+    # MC001・TBCB001W等が候補になり図面のみが 30→43（NT・PT・N24PQR1・P24PQR1は非候補化）。
+    # 2026-10-14（前段）: R1/S1/T1が機器符号候補から除外され（図面のみ 33→30）、余った補完
     # `X?`行6件が本体行へ合算された（ULKESのみ 7→1。残りはCB01Aのみ）。T01/T02は
     # ULKESに同名があるため救済され「両方」のまま。
-    assert kubun_counts == {"図面のみ": 30, "両方": 21, "ULKESのみ": 1}
+    assert kubun_counts == {"図面のみ": 43, "両方": 21, "ULKESのみ": 1}
 
     # ABC順（符号昇順）ソートの確認
     labels = symbol_df["符号"].tolist()
