@@ -29,6 +29,8 @@ SHARED_FILES = (
     'model/extraction_pipeline.py',
     'view/region_selection.py',
     'config.py',
+    'model/designator_master.py',
+    'assets/designator_digests.txt',
 )
 
 

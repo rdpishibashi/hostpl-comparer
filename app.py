@@ -10,6 +10,7 @@ import streamlit as st
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
+from model import designator_master
 from model.common_utils import save_uploadedfile
 from model.compare_excel import create_comparison_excel_output
 from model.compare_symbols import (
@@ -144,6 +145,33 @@ def _filter_no_expansion(no_expansion_by_file, ulkes_map):
     return filtered
 
 
+SPINNER_APPEAR_WAIT_SEC = 0.6
+
+
+def _status_placeholder_after_spinner():
+    """進捗表示用の `st.empty()` を返す。`st.spinner` は開始から0.5秒経ってから表示されるため、
+    その前に作ると進捗メッセージが先に出て、spinner 表示後にその下へ動いてしまう。
+    spinner が出るのを待ってから作る（DXF-extract-labels と同じ）。"""
+    time.sleep(SPINNER_APPEAR_WAIT_SEC)
+    return st.empty()
+
+
+def _resolve_master_index():
+    """機器符号一覧の索引を解決する（DXF-extract-labels と同じ。鍵は
+    `st.secrets['DESIGNATOR_MASTER_KEY']` → 環境変数の順）。鍵・ダイジェストファイルが無い、
+    または鍵が一覧生成時と異なる場合は `None`（DEF 判定なし、CAN のみ）。"""
+    try:
+        secret = st.secrets.get('DESIGNATOR_MASTER_KEY')
+    except Exception:
+        secret = None
+    if not secret:
+        secret = os.environ.get('DESIGNATOR_MASTER_KEY')
+    digest_path = os.path.join(current_dir, 'assets', 'designator_digests.txt')
+    if not secret or not os.path.isfile(digest_path):
+        return None
+    return designator_master.load_index(digest_path, secret)
+
+
 def _progress(placeholder, start_time, message, idx, total):
     """「ラベルを抽出中」と同じ形式の進捗メッセージ（DXF-extract-labels・DXF-label-comparison と共通）。"""
     placeholder.text(
@@ -174,6 +202,7 @@ def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=N
     start_time = time.time()
     analyses = st.session_state.get(region_selection.ANALYSES_KEY) if region_mode else None
 
+    master_index = _resolve_master_index()
     dxf_per_file = []
     for idx, f in enumerate(dxf_files, start=1):
         _progress(status_placeholder, start_time, f"ラベルを抽出中: {f.name}", idx, len(dxf_files))
@@ -182,7 +211,8 @@ def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=N
             dxf_per_file.append(
                 extract_symbols_from_dxf_file(
                     tmp_path, original_filename=f.name,
-                    region_filter=_region_filter_for(f, analyses) if region_mode else None)
+                    region_filter=_region_filter_for(f, analyses) if region_mode else None,
+                    master_index=master_index)
             )
         finally:
             os.unlink(tmp_path)
@@ -399,7 +429,7 @@ def _render_region_section(dxf_targets):
         if st.button("領域を検出", key="hpl_detect_btn", type="primary"):
             try:
                 with st.spinner("領域を検出中..."):
-                    status_placeholder = st.empty()
+                    status_placeholder = _status_placeholder_after_spinner()
                     analyses = region_selection.run_region_detection(
                         [(f.name, f) for f in dxf_targets],
                         region_selection.build_region_cfg(region_detection_config),
@@ -514,7 +544,7 @@ def main():
 
     if run:
         with st.spinner("処理中..."):
-            status_placeholder = st.empty()
+            status_placeholder = _status_placeholder_after_spinner()
             _run_comparison(dxf_targets, pl_targets, region_mode, status_placeholder)
             status_placeholder.empty()
         st.rerun()

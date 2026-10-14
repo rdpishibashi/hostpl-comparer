@@ -21,7 +21,6 @@ import os
 from collections import Counter
 
 from . import ref_designator
-from .label_classifier import is_ref_designator_label
 from .region_detector import assign_region_labels
 
 SCOPE_REGIONS = '特定領域'
@@ -64,12 +63,13 @@ def drawing_number_from_filename(filename):
     return os.path.splitext(os.path.basename(filename))[0]
 
 
-def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filter=None):
+def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filter=None,
+                                  master_index=None):
     """1つのDXFファイルから機器符号候補・非候補ラベルを抽出する。
 
     `ref_designator.py`の機器符号（候補）抽出パイプライン（図面枠検出→
     フォーマットブロック除外→NFKC正規化）はそのまま適用し、候補パターン判定
-    （`label_classifier.is_ref_designator_label()`）に一致したものを`counter`、
+    （機器符号候補列が DEF または CAN、`ref_designator.designator_mark()`）のものを`counter`、
     一致しなかったものを`rejected_labels`に分ける。
 
     Args:
@@ -77,6 +77,9 @@ def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filte
         original_filename: 図番の決定・表示に使うファイル名。省略時は dxf_path を使う
         region_filter: 「指定領域で比較する」用（`_apply_region_filter()` 参照）。
             省略時は図面枠内の全ラベルを対象にする（従来どおり）
+        master_index: 機器符号一覧の索引（`designator_master.DesignatorMasterIndex`）。
+            符号として採用するのは DXF-extract-labels の「機器符号候補」列が DEF または
+            CAN のラベル（`ref_designator.designator_mark()`）。省略時（鍵なし等）は CAN のみ
 
     Returns:
         dict:
@@ -110,7 +113,7 @@ def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filte
     counter = Counter()
     rejected_labels = Counter()
     for label, _x, _y in normalized:
-        if is_ref_designator_label(label):
+        if ref_designator.designator_mark(label, master_index) is not None:
             counter[label] += 1
         else:
             rejected_labels[label] += 1
