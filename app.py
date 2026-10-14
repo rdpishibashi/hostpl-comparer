@@ -357,6 +357,10 @@ def _render_results():
                         key=f"ulkes_dl_{drawing_number}",
                     )
 
+    if (result["ulkes_only"] or result["no_expansion"]
+            or result["duplicate_assembly_numbers"] or result["no_frame_filenames"]):
+        st.subheader("参考情報")
+
     if result["ulkes_only"]:
         with st.expander("ULKESのみに存在する図番", expanded=False):
             st.write("、".join(result["ulkes_only"]))
