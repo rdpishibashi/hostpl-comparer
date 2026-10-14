@@ -12,8 +12,9 @@ TECHNICAL.md の「不足分の記号形式」節に準拠、`?` の直後が3�
 - `{prefix}?{ddd}`（構成数不足の補完。直後に3桁数字が続く）: 特定の符号には
   帰属できないため、`_transfer_prefix_completions()` でDXF側の「図面のみ」
   症候（同プレフィックス）へABC順に割り当てる（2026-09-08、要求9で導入。
-  旧仕様の独立したプレフィックス別集計表は廃止した）。割り当てきれず余った分は
-  `"{prefix}?"` の1行に集約し、符号単位比較表の中で「ULKESのみ」として残す。
+  旧仕様の独立したプレフィックス別集計表は廃止した）。割り当てきれず余った分は、
+  補完元の符号が図面側にもあればその行のULKES個数に加算し（2026-10-14）、
+  図面側に無ければ `"{source}?"` の1行に集約して「ULKESのみ」として残す。
 
 比較キー（`comparison_key()`）は DXF側・ULKES側の両方に適用する
 （全角→半角 → 括弧より前 → 前後空白除去）。DXF側には「機器符号 (仕様)」の
@@ -28,6 +29,11 @@ from collections import Counter
 import pandas as pd
 
 from model.extract_symbols import extract_alphabetic_part
+from model.ref_designator import (
+    OTHER_SHORT_CATEGORY,
+    _judgment_text,
+    classify_judgment_detailed,
+)
 
 DIFF_COLUMNS = ['符号', '区分', '図面個数', 'ULKES個数']
 
@@ -35,22 +41,24 @@ KUBUN_BOTH = '両方'
 KUBUN_DXF_ONLY = '図面のみ'
 KUBUN_ULKES_ONLY = 'ULKESのみ'
 
-# 表示色（Excel出力・画面表示で共通利用）。DXF-label-compare と同じ配色を採用する
-# （2026-08-31、ユーザー指定: 青=図面のみ／緑=ULKESのみ／黄=両方だが個数不一致）。
+# 表示色（Excel出力・画面表示で共通利用）。全区分を淡色にする
+# （2026-10-14、ユーザー指定: 両方・個数一致=薄い緑／両方・個数不一致=薄い黄／
+# 図面のみ=薄いピンク／ULKESのみ=薄い青）。
 ROW_STYLE_DXF_ONLY = 'DXF_ONLY'
 ROW_STYLE_ULKES_ONLY = 'ULKES_ONLY'
 ROW_STYLE_MISMATCH = 'MISMATCH'
 ROW_STYLE_MATCH = 'MATCH'
 
-COLOR_DXF_ONLY = {'bg_color': '#D9E1F2', 'font_color': '#1F4E79'}     # 青
-COLOR_ULKES_ONLY = {'bg_color': '#C6EFCE', 'font_color': '#006100'}   # 緑
-COLOR_MISMATCH = {'bg_color': '#FFEB9C', 'font_color': '#9C6500'}     # 黄
+COLOR_DXF_ONLY = {'bg_color': '#FCE4EC', 'font_color': '#9C0006'}     # 薄いピンク
+COLOR_ULKES_ONLY = {'bg_color': '#EAF1FB', 'font_color': '#1F4E79'}   # 薄い青
+COLOR_MISMATCH = {'bg_color': '#FFF6D5', 'font_color': '#9C6500'}     # 薄い黄
+COLOR_MATCH = {'bg_color': '#EAF7EC', 'font_color': '#006100'}        # 薄い緑
 
 ROW_STYLE_COLORS = {
     ROW_STYLE_DXF_ONLY: COLOR_DXF_ONLY,
     ROW_STYLE_ULKES_ONLY: COLOR_ULKES_ONLY,
     ROW_STYLE_MISMATCH: COLOR_MISMATCH,
-    ROW_STYLE_MATCH: None,
+    ROW_STYLE_MATCH: COLOR_MATCH,
 }
 
 _COMPLETION_PATTERN = re.compile(r'^(.*)\?(\d{3})$')
@@ -142,9 +150,9 @@ def ulkes_prefix_set(symbols) -> set:
 def row_style(kubun: str, a_count, b_count) -> str:
     """区分と個数から表示スタイル区分（ROW_STYLE_*）を返す。
 
-    - 区分が『図面のみ』『ULKESのみ』ならそのまま対応する区分を返す（青／緑）。
-    - 区分が『両方』の場合、図面個数とULKES個数が一致すれば無色（MATCH）、
-      不一致（片方が欠損の場合も含む）なら黄（MISMATCH）。
+    - 区分が『図面のみ』『ULKESのみ』ならそのまま対応する区分を返す（薄いピンク／薄い青）。
+    - 区分が『両方』の場合、図面個数とULKES個数が一致すれば薄い緑（MATCH）、
+      不一致（片方が欠損の場合も含む）なら薄い黄（MISMATCH）。
     """
     if kubun == KUBUN_DXF_ONLY:
         return ROW_STYLE_DXF_ONLY
@@ -181,6 +189,13 @@ def compare_symbols(dxf_counter: Counter, ulkes_symbol_counter: Counter) -> pd.D
     return df
 
 
+def _is_other_short_label(label: str) -> bool:
+    """ラベルが `OTHER_SHORT_CATEGORY`（A・C・L・Q・U・F 以外の英大文字1字+数字
+    1〜2桁）として機器符号候補から除外されたものか。"""
+    status, category = classify_judgment_detailed(_judgment_text(label))
+    return status == 'excluded' and category == OTHER_SHORT_CATEGORY
+
+
 def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
     """DXF側で機器符号パターンに一致しなかったラベル（`rejected_counter`）のうち、
     比較キーの英字プレフィックスがULKES側プレフィックス集合に含まれるものだけを
@@ -190,14 +205,26 @@ def rescue_by_ulkes_prefix(rejected_counter: Counter, ulkes_symbols) -> Counter:
     `dxf_display_counter`）に合流させ、括弧内の仕様情報を確認できるようにする
     ため（比較そのものには`compare_pair()`内で比較キーへ変換してから使う）。
 
+    ただし `OTHER_SHORT_CATEGORY` で除外されたラベル（`R10`・`T1` 等）は、プレフィックス
+    ではなく**比較キーがULKES側の符号と完全一致する場合のみ**救済する（2026-10-14）。
+
     プレフィックス集合はそのペアのULKES側記号だけから求める（他図番のプレフィックス
     で誤って救済しないため）。DXFをアップロードしていてもULKESが無い図番では
     プレフィックス集合が空になり、救済は起きない。
     """
     prefixes = ulkes_prefix_set(ulkes_symbols)
+    ulkes_symbol_keys = set(classify_symbols(ulkes_symbols)[0])
     rescued = Counter()
     for label, count in rejected_counter.items():
-        prefix = extract_alphabetic_part(comparison_key(label))
+        key = comparison_key(label)
+        if _is_other_short_label(label):
+            # R10・T1 等の「英字1字+数字1〜2桁」は英字プレフィックスだけでは救済しない
+            # （ULKESに T01 があるだけで T1 が復活するのを避ける）。ULKES側に同じ符号が
+            # ある場合のみ救済する。
+            if key in ulkes_symbol_keys:
+                rescued[label] += count
+            continue
+        prefix = extract_alphabetic_part(key)
         if prefix and prefix in prefixes:
             rescued[label] += count
     return rescued
@@ -219,10 +246,11 @@ def _transfer_prefix_completions(
 
     各補完元の符号（`source_symbol`）について、その英字プレフィックスが一致し
     まだULKES側に無い（＝図面のみ）DXF側符号へABC順に、DXF個数を上限として
-    割り当てる。割り当てきれず余った分は`"{source_symbol}?"`として1行にまとめ、
-    「ULKESのみ」として残す（末尾`?`は完全一致した同名符号の行と符号名が衝突して
-    合算されるのを避けるための表示上の印であり、`classify_ulkes_symbol()`で
-    再解釈されることはない）。
+    割り当てる。割り当てきれず余った分は、補完元の符号自身が
+    図面側にもある（「両方」）ならその行のULKES個数に加算し、図面側に無ければ
+    `"{source_symbol}?"`として1行にまとめ「ULKESのみ」として残す（末尾`?`は同名
+    符号の行と衝突して合算されるのを避けるための表示上の印であり、
+    `classify_ulkes_symbol()`で再解釈されることはない）。
     """
     for source_symbol in sorted(ulkes_prefix_counter):
         budget = ulkes_prefix_counter[source_symbol]
@@ -242,8 +270,15 @@ def _transfer_prefix_completions(
             budget -= assign
 
         if budget > 0:
-            key = f'{source_symbol}?'
-            ulkes_symbol_counter[key] = ulkes_symbol_counter.get(key, 0) + budget
+            if source_symbol in dxf_counter:
+                # 補完元自身が図面側にもある（「両方」）なら、その行のULKES個数に
+                # 加算する（2026-10-14、ユーザー指定。`X?` 行は作らない）。
+                ulkes_symbol_counter[source_symbol] = (
+                    ulkes_symbol_counter.get(source_symbol, 0) + budget
+                )
+            else:
+                key = f'{source_symbol}?'
+                ulkes_symbol_counter[key] = ulkes_symbol_counter.get(key, 0) + budget
 
 
 def compare_pair(dxf_counter: Counter, ulkes_symbols, rejected_counter: Counter = None) -> dict:
