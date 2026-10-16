@@ -75,7 +75,11 @@ def test_end_to_end_pipeline_with_real_ee6312_data():
     # 2026-10-14（前段）: R1/S1/T1が機器符号候補から除外され（図面のみ 33→30）、余った補完
     # `X?`行6件が本体行へ合算された（ULKESのみ 7→1。残りはCB01Aのみ）。T01/T02は
     # ULKESに同名があるため救済され「両方」のまま。
-    assert kubun_counts == {"図面のみ": 43, "両方": 21, "ULKESのみ": 1}
+    # 2026-10-16: 英大文字+数字2桁・A+数字1桁・CN+ハイフンを機器符号候補から外した
+    # （DXF-extract-labels の FORCED_REGION_NAME_PATTERNS）ため、図面のみの A1・A2・PQR11・
+    # DCPSPL01・DCPSPQR11 が消えて 39→34（「両方」「ULKESのみ」は不変。変更直前の実測値は
+    # 39 で、上の 43 は AWG+数字 の OTHER 化以降は既に古くなっていた）。
+    assert kubun_counts == {"図面のみ": 34, "両方": 21, "ULKESのみ": 1}
 
     # ABC順（符号昇順）ソートの確認
     labels = symbol_df["符号"].tolist()
