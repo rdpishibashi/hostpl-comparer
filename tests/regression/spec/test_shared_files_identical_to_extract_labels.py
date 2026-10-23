@@ -28,6 +28,7 @@ SHARED_FILES = (
     'model/region_detector.py',
     'model/extraction_pipeline.py',
     'model/region_decisions.py',
+    'model/region_choices.py',
     'view/region_selection.py',
     'config.py',
     'model/designator_master.py',
