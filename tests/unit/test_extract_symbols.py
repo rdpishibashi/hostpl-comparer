@@ -239,7 +239,7 @@ def _parts_df(rows):
 
 
 def test_extract_assembly_parts_returns_raw_rows_in_file_order():
-    """守るもの: 構成行を合算・展開せず、ファイル内の順序のまま4列で返す。"""
+    """守るもの: 構成行を合算・展開せず、ファイル内の順序のまま5列（符号・構成コメント・部品番号・構成数・品目名称）で返す。"""
     df = _parts_df([
         ("EE0001-000-01A", None, None, None, None, None),
         (None, "R1_R2", 111, 2, "抵抗", "R1_R2"),
@@ -250,6 +250,7 @@ def test_extract_assembly_parts_returns_raw_rows_in_file_order():
     assert list(parts.columns) == PARTS_PREVIEW_COLUMNS
     assert parts["符号"].tolist() == ["R1_R2", "R1_R2", "C1"]
     assert parts["構成数"].tolist() == [2, 3, 1]
+    assert parts["構成コメント"].tolist()[:2] == ["R1_R2", "R1_R2"]
     assert list(parts.index) == [0, 1, 2]
 
 
