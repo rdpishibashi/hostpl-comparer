@@ -110,7 +110,7 @@ def _for_compare_display(symbol_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _parts_for_display(parts_df: pd.DataFrame) -> pd.DataFrame:
-    """パーツリスト・プレビュー用に、構成数を整数表示・欠損を空欄にする。"""
+    """パーツリストの確認用に、構成数を整数表示・欠損を空欄にする。"""
     disp = parts_df.copy()
     disp["構成数"] = disp["構成数"].apply(
         lambda v: "" if pd.isna(v) else str(int(v)) if float(v).is_integer() else str(v))
@@ -228,7 +228,7 @@ def _run_comparison(dxf_files, pl_files, status_placeholder=None):
             os.unlink(tmp_path)
 
     dxf_map, rejected_map, no_frame_filenames, dxf_warnings = build_dxf_symbol_map(dxf_per_file)
-    # 同一図番は先勝ち（build_dxf_symbol_map と同じ）。図面プレビューは採用した1件のファイルを使う
+    # 同一図番は先勝ち（build_dxf_symbol_map と同じ）。図面の確認は採用した1件のファイルを使う
     dxf_filenames = {}
     for r in dxf_per_file:
         dxf_filenames.setdefault(r["drawing_number"], r["filename"])
@@ -236,7 +236,7 @@ def _run_comparison(dxf_files, pl_files, status_placeholder=None):
     ulkes_entries = []  # (assembly_number, symbols, filename)
     no_expansion_by_file = []  # [(ファイル名, [図番, ...]), ...]
     duplicate_assembly_by_file = []  # [(ファイル名, [図番, ...]), ...]（ユニーク・ABC順）
-    parts_by_drawing = {}  # {図番: パーツリスト・プレビュー用DataFrame}（先勝ち。ulkes_map と同じ順序）
+    parts_by_drawing = {}  # {図番: パーツリストの確認用DataFrame}（先勝ち。ulkes_map と同じ順序）
     pl_warnings = []
     for idx, f in enumerate(pl_files, start=1):
         _progress(status_placeholder, start_time,
@@ -305,7 +305,7 @@ def _run_comparison(dxf_files, pl_files, status_placeholder=None):
 
 
 def _render_drawing_preview(drawing_number, filename, dxf_targets):
-    """「図面プレビュー」の中身。トグルがONのときだけ、アップロード中のDXFを viewer に描画する
+    """「図面の確認」の中身。トグルがONのときだけ、アップロード中のDXFを viewer に描画する
     （DXFのバイト列は session_state に保持しない）。"""
     if not st.toggle("図面を表示", key=f"hpl_drawing_preview_{drawing_number}"):
         return
@@ -385,10 +385,10 @@ def _render_results(dxf_targets):
                         key=f"ulkes_dl_{drawing_number}",
                     )
 
-                with st.expander("図面プレビュー", expanded=False):
+                with st.expander("図面の確認", expanded=False):
                     _render_drawing_preview(
                         drawing_number, result["dxf_filenames"].get(drawing_number), dxf_targets)
-                with st.expander("パーツリスト・プレビュー", expanded=False):
+                with st.expander("パーツリストの確認", expanded=False):
                     parts = result["ulkes_parts"].get(drawing_number)
                     if parts is None:
                         st.caption("パーツリストはありません。")
@@ -457,8 +457,8 @@ def main():
             "の符号へ割り当てます（割り当てきれない分は、補完元の符号が図面側にもあればその"
             "行のULKES個数に加算し、無ければ`{符号}?`として残ります）。\n"
             "- 図番ごとの比較結果では、「区分」ボタンで表示する行を絞り込めます（画面表示のみ。"
-            "Excel・機器符号リストには影響しません）。「図面プレビュー」でアップロードしたDXFを、"
-            "「パーツリスト・プレビュー」でULKESの該当図番の構成行（符号・構成コメント・部品番号・構成数・品目名称）を"
+            "Excel・機器符号リストには影響しません）。「図面の確認」でアップロードしたDXFを、"
+            "「パーツリストの確認」でULKESの該当図番の構成行（符号・構成コメント・部品番号・構成数・品目名称）を"
             "確認できます。\n"
             "- 色分け: 薄いピンク=図面のみ、薄い青=ULKESのみ、薄い黄=両方にあるが個数が"
             "不一致、薄い緑=両方にあり個数も一致。"
