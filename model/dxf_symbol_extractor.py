@@ -21,41 +21,6 @@ import os
 from collections import Counter
 
 from . import ref_designator
-from .region_detector import assign_region_labels
-
-SCOPE_REGIONS = '特定領域'
-SCOPE_WHOLE = '図面全体'
-
-
-def _apply_region_filter(labels, region_filter):
-    """「指定領域で比較する」用: `labels`（(text, x, y) のリスト）を領域で絞り込む。
-
-    1. 「除外」領域（境界線上を含む）の内側のラベルを取り除く。
-    2. 「特定」領域（`build_named_regions()` の結果）が1つでもあれば、いずれかの
-       「特定」領域の内側にあるラベルだけを残す。「特定」領域が無ければ（1の
-       除外後の）図面全体をそのまま使う（ファイルごとのフォールバック）。
-
-    `region_filter`: {'analysis': 領域検出結果, 'name_selections': {(fname, 領域id): [名称]},
-    'excluded_names': 「除外」領域名の集合, 'fname': ファイルキー}（streamlit 非依存。
-    呼び出し側が `view.region_selection.gather_name_selections()` 等で用意する）。
-
-    戻り値: (絞り込み後のラベル, scope, scope_regions)
-      scope: SCOPE_REGIONS または SCOPE_WHOLE／scope_regions: 使った領域名（ABC順）
-    """
-    analysis = region_filter['analysis']
-    excl_ids = ref_designator.excluded_region_ids(
-        analysis, region_filter.get('excluded_names', frozenset()))
-    excl_polys = [reg['polygon'] for reg in analysis.get('regions', [])
-                  if reg['id'] in excl_ids]
-    kept = ref_designator.filter_labels_outside_excluded(labels, excl_polys)
-
-    named, _ = ref_designator.build_named_regions(
-        analysis, region_filter['name_selections'], region_filter['fname'])
-    if not named:
-        return kept, SCOPE_WHOLE, []
-    assigned = assign_region_labels(kept, named)
-    in_regions = [(t, x, y) for (t, x, y, names) in assigned if names]
-    return in_regions, SCOPE_REGIONS, sorted({r['name'] for r in named})
 
 
 def drawing_number_from_filename(filename):
@@ -63,8 +28,7 @@ def drawing_number_from_filename(filename):
     return os.path.splitext(os.path.basename(filename))[0]
 
 
-def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filter=None,
-                                  master_index=None):
+def extract_symbols_from_dxf_file(dxf_path, original_filename=None, master_index=None):
     """1つのDXFファイルから機器符号候補・非候補ラベルを抽出する。
 
     `ref_designator.py`の機器符号（候補）抽出パイプライン（図面枠検出→
@@ -75,8 +39,6 @@ def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filte
     Args:
         dxf_path: 実際に読み込むDXFファイルのパス（一時ファイルでもよい）
         original_filename: 図番の決定・表示に使うファイル名。省略時は dxf_path を使う
-        region_filter: 「指定領域で比較する」用（`_apply_region_filter()` 参照）。
-            省略時は図面枠内の全ラベルを対象にする（従来どおり）
         master_index: 機器符号一覧の索引（`designator_master.DesignatorMasterIndex`）。
             符号として採用するのは DXF-extract-labels の「機器符号候補」列が DEF または
             CAN のラベル（`ref_designator.designator_mark()`）。省略時（鍵なし等）は CAN のみ
@@ -90,8 +52,6 @@ def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filte
                 ラベル。ULKES側プレフィックスによる救済にのみ使う内部データで、
                 プレビューには出さない）
             warning: str | None（図面枠が検出できずフォールバックした場合の警告）
-            scope: str | None（`region_filter` 指定時のみ。SCOPE_REGIONS／SCOPE_WHOLE）
-            scope_regions: list[str]（`scope` が SCOPE_REGIONS のとき使った領域名）
     """
     display_name = original_filename or dxf_path
     drawing_number = drawing_number_from_filename(display_name)
@@ -105,10 +65,6 @@ def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filte
         raw_labels = collected['labels']
 
     normalized = ref_designator.normalize_labels(raw_labels)
-
-    scope, scope_regions = None, []
-    if region_filter is not None:
-        normalized, scope, scope_regions = _apply_region_filter(normalized, region_filter)
 
     counter = Counter()
     rejected_labels = Counter()
@@ -124,8 +80,6 @@ def extract_symbols_from_dxf_file(dxf_path, original_filename=None, region_filte
         'counter': counter,
         'rejected_labels': rejected_labels,
         'warning': warning,
-        'scope': scope,
-        'scope_regions': scope_regions,
     }
 
 

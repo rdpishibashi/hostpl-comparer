@@ -12,6 +12,8 @@ from model.compare_symbols import (
     comparison_key,
     compare_pair,
     compare_symbols,
+    filter_by_kubun,
+    kubun_filter_options,
     rescue_by_ulkes_prefix,
     ulkes_prefix_set,
 )
@@ -278,3 +280,37 @@ def test_compare_pair_dxf_display_counter_excludes_non_rescued_rejected_labels()
     result = compare_pair(dxf_counter, ulkes_symbols, rejected_counter)
 
     assert result['dxf_display_counter'] == Counter()
+
+
+# --- 区分フィルタ（画面表示専用。2026-10-24） ---
+
+def _kubun_df():
+    return pd.DataFrame({
+        '符号': ['A', 'B', 'C', 'D'],
+        '区分': ['両方', '図面のみ', 'ULKESのみ', '両方'],
+        '図面個数': [1, 1, None, 2],
+        'ULKES個数': [1, None, 1, 3],
+    })
+
+
+def test_kubun_filter_options_fixed_order_and_only_present_values():
+    """守るもの: 選択肢は 図面のみ／両方／ULKESのみ の固定順で、表に存在する区分だけ。"""
+    assert kubun_filter_options(_kubun_df()['区分']) == ['図面のみ', '両方', 'ULKESのみ']
+    assert kubun_filter_options(pd.Series(['ULKESのみ', '両方'])) == ['両方', 'ULKESのみ']
+    assert kubun_filter_options(pd.Series([], dtype=object)) == []
+
+
+def test_filter_by_kubun_keeps_original_index_for_row_coloring():
+    """守るもの: 絞り込み後も元の index を保つ（色分けが symbol_df.loc[row.name] で元の行を引くため）。"""
+    df = _kubun_df()
+    shown = filter_by_kubun(df, ['両方'])
+    assert shown['符号'].tolist() == ['A', 'D']
+    assert list(shown.index) == [0, 3]
+
+
+def test_filter_by_kubun_all_none_and_partial():
+    """守るもの: 全選択は全行、全解除は空の表、一部選択はその区分の行だけ。"""
+    df = _kubun_df()
+    assert len(filter_by_kubun(df, ['図面のみ', '両方', 'ULKESのみ'])) == 4
+    assert filter_by_kubun(df, []).empty
+    assert filter_by_kubun(df, ['図面のみ', 'ULKESのみ'])['符号'].tolist() == ['B', 'C']

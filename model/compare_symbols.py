@@ -37,6 +37,8 @@ KUBUN_BOTH = '両方'
 KUBUN_DXF_ONLY = '図面のみ'
 KUBUN_ULKES_ONLY = 'ULKESのみ'
 
+KUBUN_FILTER_ORDER = (KUBUN_DXF_ONLY, KUBUN_BOTH, KUBUN_ULKES_ONLY)
+
 # 表示色（Excel出力・画面表示で共通利用）。全区分を淡色にする
 # （2026-10-14、ユーザー指定: 両方・個数一致=薄い緑／両方・個数不一致=薄い黄／
 # 図面のみ=薄いピンク／ULKESのみ=薄い青）。
@@ -356,3 +358,15 @@ def build_ulkes_symbol_map(entries) -> tuple:
             continue
         result[assembly_number] = symbols
     return result, warnings
+
+
+def kubun_filter_options(kubun_series) -> list:
+    """画面の「区分」フィルタの選択肢。表に実際にある区分だけを、図面のみ／両方／ULKESのみの順で返す。"""
+    present = set(kubun_series)
+    return [k for k in KUBUN_FILTER_ORDER if k in present]
+
+
+def filter_by_kubun(symbol_df: pd.DataFrame, selected) -> pd.DataFrame:
+    """「区分」列が `selected` に含まれる行だけを返す（index は保持する。色分けが元の行を
+    index で引くため）。画面表示専用で、Excel出力・機器符号リストには使わない。"""
+    return symbol_df[symbol_df['区分'].isin(set(selected))]

@@ -268,3 +268,36 @@ def extract_all_assemblies(df):
         result[assembly_number] = _process_rows(df, row_indices)
 
     return result, no_expansion, duplicate_assembly_numbers
+
+
+PARTS_PREVIEW_COLUMNS = ["符号", "部品番号", "構成数", "品目名称"]
+
+
+def extract_assembly_parts(df):
+    """画面の「パーツリスト・プレビュー」用に、アセンブリごとの構成行を生の行のまま返す。
+
+    `extract_all_assemblies()` と同じブロック検出・先勝ち（同一アセンブリ番号は最初の
+    ブロックだけ）で、構成行が0件のアセンブリは含めない。合算・展開・過不足補完は
+    しない（ファイル内の順序のまま `PARTS_PREVIEW_COLUMNS` の4列）。ファイルに無い列
+    （`部品番号`・`品目名称` は必須列ではない）は空欄の列にする。
+
+    Returns:
+        dict[str, pandas.DataFrame]: {アセンブリ番号: 4列のDataFrame（index は振り直し）}
+    """
+    if "図面番号" not in df.columns:
+        raise ValueError("'図面番号'列がExcelファイルに見つかりません")
+
+    result = {}
+    seen = set()
+    for assembly_number, row_indices in _find_assembly_blocks(df):
+        if assembly_number in seen:
+            continue
+        seen.add(assembly_number)
+        if not row_indices:
+            continue
+        parts = pd.DataFrame(
+            {col: (df.loc[row_indices, col].tolist() if col in df.columns
+                   else [None] * len(row_indices))
+             for col in PARTS_PREVIEW_COLUMNS})
+        result[assembly_number] = parts
+    return result

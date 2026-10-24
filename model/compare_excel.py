@@ -64,10 +64,6 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
         rows.append({'項目': 'ULKESに図番はあるが部品展開なしの件数（延べ）', '値': no_expansion_total})
     if result.get('warnings'):
         rows.append({'項目': '警告件数', '値': len(result['warnings'])})
-    if result.get('region_mode'):
-        excluded = result.get('excluded_regions') or []
-        rows.append({'項目': '指定領域で比較', '値': 'ON（DXF側のみ）'})
-        rows.append({'項目': '除外した領域', '値': '、'.join(excluded) if excluded else 'なし'})
 
     df = pd.DataFrame(rows, columns=['項目', '値'])
     df.to_excel(writer, sheet_name='サマリー', index=False)
@@ -111,11 +107,6 @@ def _write_summary_sheet(writer, result, header_fmt, link_fmt):
     _write_grouped_by_file_section('ULKESに図番はあるが部品展開なし', no_expansion_by_file)
     _write_grouped_by_file_section('複数回記載されている図面番号', duplicate_by_file)
     _write_section('図面枠を検出できないDXFファイル', no_frame_filenames)
-    if result.get('region_mode'):
-        _write_section('DXF側の対象範囲（図番ごと）', [
-            f'{drawing_number}：{scope}' + (f'（{"、".join(regions)}）' if regions else '')
-            for drawing_number, (scope, regions) in sorted(result.get('dxf_scopes', {}).items())
-        ])
     _write_section('警告', result.get('warnings', []))
 
     ws.set_column(0, 0, 55)
@@ -140,10 +131,6 @@ def create_comparison_excel_output(result: dict) -> bytes:
             フォールバック処理したDXFファイル。出現順）,
         'per_pair': {図番: {'symbol_df': DataFrame}},
         'warnings': [str, ...],
-        'region_mode': bool（省略可。「指定領域で比較する」がONか）,
-        'excluded_regions': [領域名, ...]（省略可。ON時の「除外」領域）,
-        'dxf_scopes': {図番: (scope, [領域名, ...])}（省略可。ON時のDXF側の対象範囲。
-            scope は '特定領域' または '図面全体'）,
     }
 
     「図面のみに存在する図番」は表示・出力しない（2026-09-09、ユーザー指定。

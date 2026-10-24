@@ -6,7 +6,9 @@ dedupe_by_filename()・_filter_no_expansion() はUI状態を持たない純関�
 """
 from collections import namedtuple
 
-from app import _filter_no_expansion, dedupe_by_filename
+import pandas as pd
+
+from app import _filter_no_expansion, _parts_for_display, dedupe_by_filename
 
 _FakeFile = namedtuple("_FakeFile", ["name"])
 
@@ -67,3 +69,13 @@ def test_filter_no_expansion_keeps_entries_not_expanded_anywhere():
     result = _filter_no_expansion(no_expansion_by_file, ulkes_map)
 
     assert result == [("a.xlsx", ["EE0001-000-01A"])]
+
+
+def test_parts_for_display_shows_integer_quantity_and_blank_for_missing():
+    """守るもの: パーツリスト・プレビューで構成数を整数表示（1.0→"1"）し、欠損は空欄にする。"""
+    df = pd.DataFrame({"符号": ["R1", None], "部品番号": [111, None],
+                       "構成数": [1.0, None], "品目名称": ["抵抗", None]})
+    disp = _parts_for_display(df)
+    assert disp["構成数"].tolist() == ["1", ""]
+    assert disp["符号"].tolist() == ["R1", ""]
+    assert disp["品目名称"].tolist() == ["抵抗", ""]
