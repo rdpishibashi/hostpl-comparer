@@ -5,6 +5,7 @@ import time
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # model モジュールをインポート可能にするためのパスの追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,26 +18,44 @@ from model.compare_symbols import (
     ROW_STYLE_COLORS,
     build_ulkes_symbol_map,
     compare_pair,
+    filter_by_kubun,
+    kubun_filter_options,
     pair_by_drawing_number,
     row_style,
 )
+from model.dxf_preview import build_viewer_html, render_drawing_svg
 from model.dxf_symbol_extractor import build_dxf_symbol_map, extract_symbols_from_dxf_file
-from model.extract_symbols import REQUIRED_COLUMNS, extract_all_assemblies
-from model.ref_designator import unnamed_region_labels
-from model.region_detector import collect_unique_region_candidate_names
-from config import region_detection_config
-from view import region_selection
+from model.extract_symbols import REQUIRED_COLUMNS, extract_all_assemblies, extract_assembly_parts
 
-# 比較結果（「比較」実行時に生成する）。再検出・オプション切替で古くなるため消す対象
-_COMPARE_RESULT_KEYS = ("compare_result", "compare_output", "ulkes_map")
-# 領域検出の状態（「領域を検出」の再実行・DXF構成の変更・オプションOFFで消す）
-_REGION_KEYS = (region_selection.ANALYSES_KEY, region_selection.CONFIRMED_KEY,
-                "hpl_detected_files")
+DRAWING_PREVIEW_HEIGHT_PX = 720
+DRAWING_PREVIEW_WARN_BYTES = 8 * 1024 * 1024
 
 
 @st.cache_data(max_entries=20, ttl=3600)
 def load_excel(file_bytes: bytes) -> pd.DataFrame:
     return pd.read_excel(io.BytesIO(file_bytes))
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def render_drawing_html(dxf_data: bytes):
+    """アップロードされた DXF のバイト列から viewer HTML を生成する（バイト列をキーにキャッシュ）。
+
+    左パネルは操作（全体表示・全画面）のみ。DXF-diff-manager の「他図面の表示」と同じ viewer。
+    戻り値: (html, 日本語フォントがあるか, 描画対象が空か)
+    """
+    result = render_drawing_svg(dxf_data)
+    return (build_viewer_html(result, height_px=DRAWING_PREVIEW_HEIGHT_PX, layer_panel=False),
+            result.cjk_font is not None, result.empty)
+
+
+def show_preview_html(preview):
+    """viewer HTML（`render_drawing_html` の戻り値）を表示する。注意書き（日本語フォント・大きい図面）付き。"""
+    preview_html, has_cjk_font, is_empty = preview
+    if not has_cjk_font and not is_empty:
+        st.caption("⚠️ 日本語フォントが見つからないため、日本語の文字はプレビューに表示されません。")
+    if len(preview_html) > DRAWING_PREVIEW_WARN_BYTES:
+        st.caption(f"⚠️ 図面が大きいため表示に時間がかかる場合があります（約 {len(preview_html) / 1024 / 1024:.0f}MB）。")
+    components.html(preview_html, height=DRAWING_PREVIEW_HEIGHT_PX)
 
 
 def is_dxf_file(filename: str) -> bool:
@@ -88,6 +107,14 @@ def _for_compare_display(symbol_df: pd.DataFrame) -> pd.DataFrame:
     for col in ("図面個数", "ULKES個数"):
         disp[col] = disp[col].apply(lambda v: "" if pd.isna(v) else str(int(v)))
     return disp
+
+
+def _parts_for_display(parts_df: pd.DataFrame) -> pd.DataFrame:
+    """パーツリスト・プレビュー用に、構成数を整数表示・欠損を空欄にする。"""
+    disp = parts_df.copy()
+    disp["構成数"] = disp["構成数"].apply(
+        lambda v: "" if pd.isna(v) else str(int(v)) if float(v).is_integer() else str(v))
+    return disp.fillna("")
 
 
 def _compare_row_style_factory(symbol_df: pd.DataFrame):
@@ -178,29 +205,13 @@ def _progress(placeholder, start_time, message, idx, total):
         f"{message}（{idx}/{total}件、経過 {time.time() - start_time:.1f} 秒）")
 
 
-def _region_filter_for(f, analyses):
-    """この DXF に適用する領域フィルタ（`dxf_symbol_extractor` の `region_filter`）。
-    領域検出結果が無ければ None（従来どおり図面枠内の全ラベル）。"""
-    analysis = (analyses or {}).get(f.name)
-    if analysis is None:
-        return None
-    return {
-        "analysis": analysis,
-        "name_selections": region_selection.gather_name_selections(f.name, analysis),
-        "excluded_names": region_selection.global_excluded_region_names(),
-        "fname": f.name,
-    }
-
-
-def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=None):
+def _run_comparison(dxf_files, pl_files, status_placeholder=None):
     """アップロードされたDXF・ULKES PLファイルを処理し、比較結果をsession_stateに格納する。
 
-    `region_mode`（「指定領域で比較する」）はDXF側にだけ適用する（ULKES側は常に図番の全部品）。
     `status_placeholder` に進捗メッセージ（「ラベルを抽出中: …」等）を表示する。"""
     if status_placeholder is None:
         status_placeholder = st.empty()
     start_time = time.time()
-    analyses = st.session_state.get(region_selection.ANALYSES_KEY) if region_mode else None
 
     master_index = _resolve_master_index()
     dxf_per_file = []
@@ -211,22 +222,21 @@ def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=N
             dxf_per_file.append(
                 extract_symbols_from_dxf_file(
                     tmp_path, original_filename=f.name,
-                    region_filter=_region_filter_for(f, analyses) if region_mode else None,
                     master_index=master_index)
             )
         finally:
             os.unlink(tmp_path)
 
     dxf_map, rejected_map, no_frame_filenames, dxf_warnings = build_dxf_symbol_map(dxf_per_file)
-    # 同一図番は先勝ち（build_dxf_symbol_map と同じ）。対象範囲も採用した1件のものを使う
-    dxf_scopes = {}
+    # 同一図番は先勝ち（build_dxf_symbol_map と同じ）。図面プレビューは採用した1件のファイルを使う
+    dxf_filenames = {}
     for r in dxf_per_file:
-        if r["scope"] is not None:
-            dxf_scopes.setdefault(r["drawing_number"], (r["scope"], r["scope_regions"]))
+        dxf_filenames.setdefault(r["drawing_number"], r["filename"])
 
     ulkes_entries = []  # (assembly_number, symbols, filename)
     no_expansion_by_file = []  # [(ファイル名, [図番, ...]), ...]
     duplicate_assembly_by_file = []  # [(ファイル名, [図番, ...]), ...]（ユニーク・ABC順）
+    parts_by_drawing = {}  # {図番: パーツリスト・プレビュー用DataFrame}（先勝ち。ulkes_map と同じ順序）
     pl_warnings = []
     for idx, f in enumerate(pl_files, start=1):
         _progress(status_placeholder, start_time,
@@ -254,6 +264,8 @@ def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=N
             )
         for assembly_number, symbols in assemblies.items():
             ulkes_entries.append((assembly_number, symbols, f.name))
+        for assembly_number, parts in extract_assembly_parts(df).items():
+            parts_by_drawing.setdefault(assembly_number, parts)
 
     ulkes_map, cross_file_warnings = build_ulkes_symbol_map(ulkes_entries)
     pl_warnings.extend(cross_file_warnings)
@@ -282,11 +294,9 @@ def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=N
         "no_frame_filenames": no_frame_filenames,
         "per_pair": per_pair,
         "warnings": dxf_warnings + pl_warnings,
+        "dxf_filenames": {dn: dxf_filenames[dn] for dn in pairs if dn in dxf_filenames},
+        "ulkes_parts": {dn: parts_by_drawing[dn] for dn in pairs if dn in parts_by_drawing},
     }
-    if region_mode:
-        result["region_mode"] = True
-        result["excluded_regions"] = sorted(region_selection.global_excluded_region_names())
-        result["dxf_scopes"] = {dn: dxf_scopes[dn] for dn in pairs if dn in dxf_scopes}
 
     status_placeholder.text("比較結果のExcelを作成中...")
     st.session_state["compare_result"] = result
@@ -294,7 +304,22 @@ def _run_comparison(dxf_files, pl_files, region_mode=False, status_placeholder=N
     st.session_state["ulkes_map"] = ulkes_map
 
 
-def _render_results():
+def _render_drawing_preview(drawing_number, filename, dxf_targets):
+    """「図面プレビュー」の中身。トグルがONのときだけ、アップロード中のDXFを viewer に描画する
+    （DXFのバイト列は session_state に保持しない）。"""
+    if not st.toggle("図面を表示", key=f"hpl_drawing_preview_{drawing_number}"):
+        return
+    target = next((f for f in dxf_targets if f.name == filename), None)
+    if target is None:
+        st.caption("DXFファイルが見つかりません（比較後にアップロードから外された可能性があります）。")
+        return
+    try:
+        show_preview_html(render_drawing_html(target.getvalue()))
+    except Exception as e:
+        st.warning(f"プレビューを表示できませんでした: {e}")
+
+
+def _render_results(dxf_targets):
     result = st.session_state["compare_result"]
     ulkes_map = st.session_state["ulkes_map"]
 
@@ -306,7 +331,6 @@ def _render_results():
         f"比較した図番ペア: {len(result['pairs'])}件　/　"
         f"ULKESのみ: {len(result['ulkes_only'])}件　/　"
         f"ULKESに図番はあるが部品展開なし: {no_expansion_total}件"
-        + ("　/　指定領域で比較: ON" if result.get("region_mode") else "")
     )
     for w in result["warnings"]:
         st.warning(w)
@@ -325,13 +349,17 @@ def _render_results():
         for drawing_number in result["pairs"]:
             pair_data = result["per_pair"][drawing_number]
             with st.expander(drawing_number, expanded=False):
-                if result.get("region_mode") and drawing_number in result.get("dxf_scopes", {}):
-                    scope, scope_regions = result["dxf_scopes"][drawing_number]
-                    st.caption("DXF側の対象範囲: " + scope + (
-                        f"（{'、'.join(scope_regions)}）" if scope_regions else ""))
+                symbol_df = pair_data["symbol_df"]
+                # 区分の絞り込みは表示専用（Excel・機器符号リストには効かない）。
+                # 選択肢の構成が変わったときに古い選択が残らないよう、key に含める
+                options = kubun_filter_options(symbol_df["区分"])
+                selected = st.pills(
+                    "区分", options, selection_mode="multi", default=options,
+                    key=f"hpl_kubun_{drawing_number}:{'|'.join(options)}")
+                shown_df = filter_by_kubun(symbol_df, selected or [])
                 st.dataframe(
-                    _for_compare_display(pair_data["symbol_df"]).style.apply(
-                        _compare_row_style_factory(pair_data["symbol_df"]), axis=1
+                    _for_compare_display(shown_df).style.apply(
+                        _compare_row_style_factory(symbol_df), axis=1
                     ),
                     width="stretch",
                     hide_index=True,
@@ -356,6 +384,16 @@ def _render_results():
                         f"{drawing_number}_partslist.txt",
                         key=f"ulkes_dl_{drawing_number}",
                     )
+
+                with st.expander("図面プレビュー", expanded=False):
+                    _render_drawing_preview(
+                        drawing_number, result["dxf_filenames"].get(drawing_number), dxf_targets)
+                with st.expander("パーツリスト・プレビュー", expanded=False):
+                    parts = result["ulkes_parts"].get(drawing_number)
+                    if parts is None:
+                        st.caption("パーツリストはありません。")
+                    else:
+                        st.dataframe(_parts_for_display(parts), width="stretch", hide_index=True)
 
     if (result["ulkes_only"] or result["no_expansion"]
             or result["duplicate_assembly_numbers"] or result["no_frame_filenames"]):
@@ -392,77 +430,6 @@ def _render_results():
     )
 
 
-def _clear_session_keys(keys=(), prefixes=()):
-    for k in keys:
-        st.session_state.pop(k, None)
-    if prefixes:
-        for k in list(st.session_state.keys()):
-            if isinstance(k, str) and k.startswith(tuple(prefixes)):
-                del st.session_state[k]
-
-
-def _clear_region_state():
-    _clear_session_keys(keys=_REGION_KEYS, prefixes=region_selection.SELECTION_KEY_PREFIXES)
-
-
-def _render_region_section(dxf_targets):
-    """「指定領域で比較する」オプションと、ON時の領域検出・領域一覧（特定・除外）・領域の確認。
-    DXF側にだけ適用される（ULKES側に領域は無い）。
-    戻り値: (region_mode, 「比較」ボタンを押してよいか)"""
-    st.subheader("オプション")
-    region_mode = st.checkbox(
-        "指定領域で比較する", key="hpl_region_mode",
-        help="ONにすると「領域を検出」ボタン・「抽出領域の選択」「領域の確認」セクションが表示されます。"
-             "DXF側のラベルを、「特定」した領域の内側だけにして（「特定」領域が無い図面は図面全体）、"
-             "「除外」した領域の内側は除いて比較します。ULKES側は常に図番の全部品です。"
-             "（検出パラメータは config.py の region_detection_config で設定します）",
-    )
-    if st.session_state.get("hpl_region_mode_prev") not in (None, region_mode):
-        _clear_session_keys(keys=_COMPARE_RESULT_KEYS)   # オプション切替で前回の比較結果は古くなる
-    st.session_state["hpl_region_mode_prev"] = region_mode
-    if not region_mode:
-        _clear_region_state()
-        return False, True
-
-    current_files = sorted(f.name for f in dxf_targets)
-    if st.session_state.get("hpl_detected_files", current_files) != current_files:
-        _clear_region_state()   # 検出後にDXFが変わったら検出結果は無効
-
-    analyses = st.session_state.get(region_selection.ANALYSES_KEY)
-    if analyses is None:
-        if st.button("領域を検出", key="hpl_detect_btn", type="primary"):
-            try:
-                with st.spinner("領域を検出中..."):
-                    status_placeholder = _status_placeholder_after_spinner()
-                    analyses = region_selection.run_region_detection(
-                        [(f.name, f) for f in dxf_targets],
-                        region_selection.build_region_cfg(region_detection_config),
-                        status_placeholder, time.time())
-                    status_placeholder.empty()
-                _clear_region_state()
-                _clear_session_keys(keys=_COMPARE_RESULT_KEYS)
-                st.session_state[region_selection.ANALYSES_KEY] = analyses
-                st.session_state["hpl_detected_files"] = current_files
-                st.rerun()
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
-        return True, False
-
-    # 名称のない領域も一覧に出す（表示名は ref_designator.unnamed_region_labels()）。
-    # 既定はOFF（default_on_names を渡さない）——既定ONだと全図面に「特定」領域があることになり、
-    # 「特定」領域が無い図面は図面全体で比較する、というフォールバックが働かなくなるため。
-    unnamed = list(dict.fromkeys(
-        label for analysis in analyses.values()
-        for label in unnamed_region_labels(analysis).values()))
-    region_selection.render_global_region_names_section(
-        collect_unique_region_candidate_names(analyses) + unnamed, False,
-        action="比較", allow_exclude=True)
-    if not st.session_state.get(region_selection.CONFIRMED_KEY):
-        return True, False
-    region_selection.render_region_confirmation_section(analyses, False, action="比較")
-    return True, True
-
-
 def main():
     st.set_page_config(page_title="HostPL Comparer", page_icon="🔍", layout="wide")
     st.title("HostPL Comparer")
@@ -489,11 +456,10 @@ def main():
             "（`{prefix}?{連番3桁}`）はDXF側で「図面のみ」となっている同プレフィックス"
             "の符号へ割り当てます（割り当てきれない分は、補完元の符号が図面側にもあればその"
             "行のULKES個数に加算し、無ければ`{符号}?`として残ります）。\n"
-            "- 「指定領域で比較する」をONにすると、DXF側のラベルを領域で絞り込めます"
-            "（ULKES側は常に図番の全部品）。「領域を検出」→「抽出領域の選択」で、比較したい領域を"
-            "「特定」、比較から外したい領域を「除外」にチェックします。「特定」した領域の内側の"
-            "ラベルだけを比較し（「特定」領域が無い図面は図面全体）、「除外」した領域の内側は"
-            "除きます。\n"
+            "- 図番ごとの比較結果では、「区分」ボタンで表示する行を絞り込めます（画面表示のみ。"
+            "Excel・機器符号リストには影響しません）。「図面プレビュー」でアップロードしたDXFを、"
+            "「パーツリスト・プレビュー」でULKESの該当図番の構成行（符号・構成コメント・部品番号・構成数・品目名称）を"
+            "確認できます。\n"
             "- 色分け: 薄いピンク=図面のみ、薄い青=ULKESのみ、薄い黄=両方にあるが個数が"
             "不一致、薄い緑=両方にあり個数も一致。"
         )
@@ -534,29 +500,23 @@ def main():
         st.info("DXFファイルまたはULKES PLファイルをアップロードしてください。")
         return
 
-    region_mode, region_ready = False, True
-    if dxf_targets:
-        region_mode, region_ready = _render_region_section(dxf_targets)
-    else:
-        _clear_region_state()
-
     st.subheader("比較の実行")
     has_input = bool(dxf_targets) or bool(pl_targets)
     compare_done = "compare_result" in st.session_state
     run_type = "secondary" if compare_done else "primary"
-    run = st.button("比較", type=run_type, disabled=not has_input or not region_ready)
+    run = st.button("比較", type=run_type, disabled=not has_input)
 
     if run:
         with st.spinner("処理中..."):
             status_placeholder = _status_placeholder_after_spinner()
-            _run_comparison(dxf_targets, pl_targets, region_mode, status_placeholder)
+            _run_comparison(dxf_targets, pl_targets, status_placeholder)
             status_placeholder.empty()
         st.rerun()
 
     if not compare_done:
         return
 
-    _render_results()
+    _render_results(dxf_targets)
 
 
 if __name__ == "__main__":

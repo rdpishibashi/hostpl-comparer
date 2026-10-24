@@ -2,7 +2,9 @@
 import pandas as pd
 import pytest
 
-from model.extract_symbols import extract_all_assemblies, extract_circuit_symbols
+from model.extract_symbols import (
+    PARTS_PREVIEW_COLUMNS, extract_all_assemblies, extract_assembly_parts, extract_circuit_symbols,
+)
 
 
 def _df(rows):
@@ -228,3 +230,63 @@ def test_duplicate_rows_preserve_first_occurrence_order():
     # R1は構成数合算2だが機器符号1個→不足1個をR1自身の名前で補完。C1はそのまま
     assert symbols == ["R1", "R1?001", "C1"]
     assert row_count == 3
+
+
+# --- extract_assembly_parts（パーツリスト・プレビュー用。2026-10-24） ---
+
+def _parts_df(rows):
+    return pd.DataFrame(rows, columns=["図面番号", "符号", "部品番号", "構成数", "品目名称", "構成コメント"])
+
+
+def test_extract_assembly_parts_returns_raw_rows_in_file_order():
+    """守るもの: 構成行を合算・展開せず、ファイル内の順序のまま5列（符号・構成コメント・部品番号・構成数・品目名称）で返す。"""
+    df = _parts_df([
+        ("EE0001-000-01A", None, None, None, None, None),
+        (None, "R1_R2", 111, 2, "抵抗", "R1_R2"),
+        (None, "R1_R2", 111, 3, "抵抗", "R1_R2"),   # 同じ符号の行も合算しない
+        (None, "C1", 222, 1, "コンデンサ", None),
+    ])
+    parts = extract_assembly_parts(df)["EE0001-000-01A"]
+    assert list(parts.columns) == PARTS_PREVIEW_COLUMNS
+    assert parts["符号"].tolist() == ["R1_R2", "R1_R2", "C1"]
+    assert parts["構成数"].tolist() == [2, 3, 1]
+    assert parts["構成コメント"].tolist()[:2] == ["R1_R2", "R1_R2"]
+    assert list(parts.index) == [0, 1, 2]
+
+
+def test_extract_assembly_parts_first_block_wins_and_skips_empty_blocks():
+    """守るもの: 同一アセンブリは最初のブロックだけ（extract_all_assemblies と同じ先勝ち）、構成行0件は含めない。"""
+    df = _parts_df([
+        ("EE0001-000-01A", None, None, None, None, None),
+        (None, "R1", 1, 1, "抵抗", None),
+        ("EE0002-000-01A", None, None, None, None, None),   # 構成行なし
+        ("EE0001-000-01A", None, None, None, None, None),   # 2回目の出現
+        (None, "C9", 9, 1, "コンデンサ", None),
+    ])
+    result = extract_assembly_parts(df)
+    assert list(result) == ["EE0001-000-01A"]
+    assert result["EE0001-000-01A"]["符号"].tolist() == ["R1"]
+
+
+def test_extract_assembly_parts_missing_optional_columns_become_blank():
+    """守るもの: 必須列ではない「部品番号」「品目名称」がファイルに無くても落ちず、空欄の列になる。"""
+    df = pd.DataFrame(
+        [("EE0001-000-01A", None, None), (None, "R1", 1)],
+        columns=["図面番号", "符号", "構成数"])
+    parts = extract_assembly_parts(df)["EE0001-000-01A"]
+    assert list(parts.columns) == PARTS_PREVIEW_COLUMNS
+    assert parts["部品番号"].isna().all() and parts["品目名称"].isna().all()
+    assert parts["符号"].tolist() == ["R1"]
+
+
+def test_extract_assembly_parts_same_assemblies_as_extract_all_assemblies():
+    """守るもの: プレビュー対象の図番の集合が、比較対象（extract_all_assemblies）と一致する。"""
+    df = _parts_df([
+        ("EE0001-000-01A", None, None, None, None, None),
+        (None, "R1", 1, 1, "抵抗", None),
+        ("EE0002-000-01A", None, None, None, None, None),
+        ("EE0003-000-01A", None, None, None, None, None),
+        (None, "C1", 2, 1, "コンデンサ", None),
+    ])
+    assemblies, _no_expansion, _dup = extract_all_assemblies(df)
+    assert set(extract_assembly_parts(df)) == set(assemblies)
