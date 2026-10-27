@@ -200,7 +200,7 @@ def _resolve_master_index():
 
 
 def _progress(placeholder, start_time, message, idx, total):
-    """「ラベルを抽出中」と同じ形式の進捗メッセージ（DXF-extract-labels・DXF-label-comparison と共通）。"""
+    """「ラベルを抽出中」と同じ形式の進捗メッセージ（DXF-extract-labels・DXF-cross-checker と共通）。"""
     placeholder.text(
         f"{message}（{idx}/{total}件、経過 {time.time() - start_time:.1f} 秒）")
 
