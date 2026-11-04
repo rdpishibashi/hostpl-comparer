@@ -310,6 +310,7 @@ button:hover{background:#3a3a3a}
 
 _VIEWER_JS = """
 (function(){
+  var initialHtml='<!doctype html>'+document.documentElement.outerHTML;
   var svg=document.getElementById('cv');
   var vb0=svg.getAttribute('viewBox').split(' ').map(Number);
   var vb=vb0.slice();
@@ -348,6 +349,18 @@ _VIEWER_JS = """
     p.catch(function(){fsNote.textContent='この環境では全画面にできません';});});
   document.addEventListener('fullscreenchange',fsLabel);
 
+  var popBtn=document.getElementById('pop');
+  if(window.name.indexOf('dxfPreviewPopup')===0){
+    wrap.style.height='100%';popBtn.style.display='none';
+  }else{
+    popBtn.addEventListener('click',function(){
+      fsNote.textContent='';
+      var w=window.open('','dxfPreviewPopup'+Date.now(),'width=1280,height=860');
+      if(!w){fsNote.textContent='ポップアップがブロックされました。ブラウザーで許可してください';return;}
+      try{w.document.open();w.document.write(initialHtml);w.document.close();}
+      catch(err){w.close();fsNote.textContent='この環境では別ウィンドウを開けません';}});
+  }
+
   var boxes=Array.prototype.slice.call(document.querySelectorAll('input[data-layer]'));
   function show(name,on){
     var g=svg.querySelector('g.layer[data-layer="'+name+'"]');
@@ -369,7 +382,7 @@ _VIEWER_JS = """
 def build_viewer_html(result: PreviewResult, height_px: int = 720, layer_panel: bool = True) -> str:
     """自己完結した HTML（inline SVG + CSS + 素の JS）を生成する。外部参照は含まない。
 
-    layer_panel=False のとき、左パネルは操作（全体表示・全画面）と操作方法だけにする（他図面用）。
+    layer_panel=False のとき、左パネルは操作（全体表示・全画面・別ウィンドウ）と操作方法だけにする（他図面用）。
     """
     if result.empty:
         return (
@@ -410,7 +423,7 @@ def build_viewer_html(result: PreviewResult, height_px: int = 720, layer_panel: 
 <body><div id="wrap" style="height:{height_px}px">
 <div id="side"{side_style}>
 {panel_top}
-<h4>操作</h4><button id="fit">全体表示</button><button id="fs">全画面</button><div id="fsnote" style="color:#e8a"></div>
+<h4>操作</h4><button id="fit">全体表示</button><button id="fs">全画面</button><button id="pop">別ウィンドウ</button><div id="fsnote" style="color:#e8a"></div>
 <div style="color:#888;margin-top:6px;line-height:1.5">ホイール: 拡大縮小<br>ドラッグ: 移動<br>ダブルクリック: 全体表示</div>
 <div style="color:#e8a;margin-top:8px">{html.escape(font_note)}</div>
 </div>
