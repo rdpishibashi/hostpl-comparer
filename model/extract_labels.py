@@ -254,6 +254,7 @@ def extract_title_and_subtitle(
     main_drawing_group=None,
     doc=None,
     check_layer=True,
+    coord_scale=1.0,
 ) -> Dict[str, Optional[str]]:
     """テキストラベルの位置関係からタイトルとサブタイトルを抽出する。
 
@@ -276,6 +277,11 @@ def extract_title_and_subtitle(
     レイヤー単位のoff/frozen判定をスキップさせる。唯一のタイトルブロックが
     off/frozenレイヤーに置かれている図面のフォールバック探索でのみ使う
     （`extract_labels()` 参照）。
+
+    `coord_scale`: all_labels の座標が図面座標を何分の1にした値か。拡大配置
+    されたタイトルブロックの図面で、`extract_labels()` が座標を正規化して渡す
+    ときに使う（`_titleblock_scale()` 参照）。図面座標で検出する図面枠の
+    bbox を同じ倍率で割り、比較する座標系を揃える。
     """
     if not all_labels:
         return {'title': None, 'subtitle': None}
@@ -312,6 +318,8 @@ def extract_title_and_subtitle(
     title_proximity_x = extraction_config.TITLE_PROXIMITY_X
     title_candidates = []
     frame_bbox = _titleblock_frame_bbox(doc, main_drawing_group, check_layer=check_layer)
+    if frame_bbox is not None and coord_scale != 1.0:
+        frame_bbox = tuple(v / coord_scale for v in frame_bbox)
 
     for label, coords in all_labels:
         label_upper = label.upper().strip()
@@ -556,6 +564,57 @@ def _entity_handle(entity):
     return getattr(entity.dxf, 'handle', None)
 
 
+def _is_titleblock_keyword(label: str) -> bool:
+    """タイトルブロックの見出しラベル（TITLE・DWG No.・流用元図番）かどうか。"""
+    compact = label.upper().replace('\n', '').replace('\r', '').replace(' ', '')
+    if compact == 'TITLE':
+        return True
+    if 'DWG' in compact and 'NO' in compact:
+        return True
+    return '流用元' in label
+
+
+def _titleblock_scale(doc, labels_with_group) -> float:
+    """タイトルブロック（INSERT）の拡大率を返す。拡大されていなければ 1.0。
+
+    図番・流用元図番・タイトルの判定に使う距離しきい値（`SOURCE_LABEL_PROXIMITY`
+    等）は、等倍で配置されたタイトルブロックを前提にした図面単位の値である。
+    図面全体を 10 倍の座標で描き、タイトルブロックを `xscale=10` で INSERT した
+    図面（EE7319-300-01A.dxf・EE6094-300-01C.dxf）では、ラベル間の距離も 10 倍に
+    なりしきい値に届かない。呼び出し側はこの値で座標を割って判定する。
+
+    見出しラベル（`_is_titleblock_keyword`）のうち最も右にあるもののグループ
+    （親 INSERT の handle）を調べ、その INSERT の `abs(xscale)` を返す。INSERT で
+    ない（直接配置）、縦横の倍率が違う、取得できない場合は 1.0。
+    """
+    if doc is None:
+        return 1.0
+    keyword_items = [item for item in labels_with_group
+                     if len(item) >= 3 and item[2] and _is_titleblock_keyword(item[0])]
+    if not keyword_items:
+        return 1.0
+    group = max(keyword_items, key=lambda item: item[1][0])[2]
+    try:
+        entity = doc.entitydb.get(group)
+        if entity is None or entity.dxftype() != 'INSERT':
+            return 1.0
+        sx = abs(float(entity.dxf.get('xscale', 1.0)))
+        sy = abs(float(entity.dxf.get('yscale', 1.0)))
+    except Exception:
+        return 1.0
+    if sx <= 0 or abs(sx - sy) > 1e-6 * max(sx, sy):
+        return 1.0
+    if abs(sx - 1.0) < 1e-6:
+        return 1.0
+    return sx
+
+
+def _scale_coords(items, scale: float):
+    """`(テキスト, 座標, グループ)` の座標だけを 1/scale にした写しを返す。"""
+    return [(item[0], (item[1][0] / scale, item[1][1] / scale)) + tuple(item[2:])
+            for item in items]
+
+
 def _collect_text_entities(doc, msp, selected_layers, check_layer=True):
     """MODEL_SPACE・PAPER_SPACE・INSERT展開の全経路からTEXT/MTEXTエンティティを
     収集する（重複除去はしない）。戻り値は `[(entity, group_key), ...]`。
@@ -778,12 +837,25 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         # 実際に発生）。呼び出し側のオプション指定を尊重するため、info の公開キー
         # （main_drawing_number/source_drawing_number/all_drawing_numbers）は
         # 従来どおり extract_drawing_numbers_option=True のときのみ設定する。
+        # 拡大配置されたタイトルブロック（xscale=10 等）は、判定用の座標だけを
+        # 拡大率で割って等倍相当にする（_titleblock_scale() 参照）。等倍の図面
+        # では従来の配列をそのまま使う。出力ラベルの座標は変えない。
+        coord_scale = 1.0
+        if extract_drawing_numbers_option or extract_title_option:
+            coord_scale = _titleblock_scale(doc, all_labels_with_coords)
+        if coord_scale != 1.0:
+            judge_labels = _scale_coords(all_labels_with_coords, coord_scale)
+            judge_candidates = _scale_coords(drawing_number_candidates, coord_scale)
+        else:
+            judge_labels = all_labels_with_coords
+            judge_candidates = drawing_number_candidates
+
         main_drawing_group = None
         if (extract_drawing_numbers_option or extract_title_option) and drawing_number_candidates:
             filename_for_matching = original_filename if original_filename else dxf_file
             drawing_info = determine_drawing_number_types(
-                drawing_number_candidates,
-                all_labels=all_labels_with_coords,
+                judge_candidates,
+                all_labels=judge_labels,
                 filename=filename_for_matching,
             )
             main_drawing_group = drawing_info['main_group']
@@ -795,11 +867,12 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         # タイトル・サブタイトルの抽出
         if extract_title_option and all_labels_with_coords:
             title_info = extract_title_and_subtitle(
-                all_labels_with_coords,
-                drawing_numbers=drawing_number_candidates or None,
+                judge_labels,
+                drawing_numbers=judge_candidates or None,
                 main_drawing_group=main_drawing_group,
                 doc=doc,
                 check_layer=check_layer_for_title,
+                coord_scale=coord_scale,
             )
             info["title"] = title_info['title']
             info["subtitle"] = title_info['subtitle']
