@@ -105,7 +105,10 @@ def _block_has_text_content(doc, block_name, cache, _visiting=None):
 
 
 def extract_text_from_entity(entity) -> Tuple[str, str, Tuple[float, float]]:
-    """TEXT / MTEXT エンティティからテキストと座標を抽出する"""
+    """TEXT / MTEXT / ATTRIB エンティティからテキストと座標を抽出する
+
+    ATTRIB（INSERT の属性）は、図番・タイトルを属性で持つ古いタイトル欄の判定用フォールバック
+    （`_collect_attrib_entities()`）だけが渡す。通常の収集経路は ATTRIB を渡さない。"""
     try:
         x, y = 0.0, 0.0
 
@@ -120,7 +123,7 @@ def extract_text_from_entity(entity) -> Tuple[str, str, Tuple[float, float]]:
                     y = getattr(entity.dxf, 'y', 0.0)
                 except Exception:
                     x, y = 0.0, 0.0
-        elif entity.dxftype() == 'TEXT':
+        elif entity.dxftype() in ('TEXT', 'ATTRIB'):
             if hasattr(entity.dxf, 'insert'):
                 x, y = entity.dxf.insert[0], entity.dxf.insert[1]
             elif hasattr(entity.dxf, 'location'):
@@ -128,7 +131,7 @@ def extract_text_from_entity(entity) -> Tuple[str, str, Tuple[float, float]]:
 
         raw_text = ""
 
-        if entity.dxftype() == 'TEXT':
+        if entity.dxftype() in ('TEXT', 'ATTRIB'):
             if hasattr(entity.dxf, 'text'):
                 raw_text = entity.dxf.text
         elif entity.dxftype() == 'MTEXT':
@@ -694,6 +697,31 @@ def _collect_text_entities(doc, msp, selected_layers, check_layer=True):
     return all_entities_to_process
 
 
+def _collect_attrib_entities(doc, msp, selected_layers):
+    """表示中の INSERT（モデル空間・ペーパー空間のトップレベル）が持つ表示中の属性（ATTRIB）を
+    `[(attrib, group_key)]` で返す。group_key は親 INSERT の handle（図番とタイトルが同じ
+    タイトル欄ブロックのグループになる）。入れ子の INSERT の属性は対象外。
+
+    `extract_labels()` が、図番を TEXT/MTEXT から1件も見つけられないときだけ、図番・タイトル判定の
+    手がかりとして使う（2026-11-18。出力ラベルには入れない）。
+    """
+    out = []
+    layouts = [msp]
+    try:
+        layouts += [layout for layout in doc.layouts if layout.name != 'Model']
+    except Exception:
+        pass
+    for layout in layouts:
+        for e in layout:
+            if e.dxftype() != 'INSERT' or e.dxf.layer not in selected_layers or is_invisible(e):
+                continue
+            group = _entity_handle(e)
+            for a in e.attribs:
+                if not is_invisible(a):
+                    out.append((a, group))
+    return out
+
+
 def _dedup_text_entities(entities_with_group):
     """同一種・同一レイヤー・同一座標のエンティティを除去する。"""
     seen_entities = set()
@@ -825,6 +853,19 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
                     all_labels_with_coords = fallback_labels_with_coords
                     drawing_number_candidates = fallback_drawing_number_candidates
                     check_layer_for_title = False
+
+        # 属性フォールバック（2026-11-18）: 上の2つのどちらでも図番候補が1件も無いときだけ、
+        # 表示中の INSERT の属性（ATTRIB）を図番・タイトル判定の手がかりに加える。DWG から変換した
+        # 古い図面（EE3298-637-02E 等。タイトル欄 ULVAC_TITLE_05 が図番を `DWG.NO{..}`、タイトルを
+        # `TITLE{..}` の属性で持つ）は、図番が文字で取れないため図番からタイトル欄を特定する処理に
+        # 入れず、図面枠の区画記号 `F` をタイトルにしていた。判定用のラベルにだけ足し、出力する
+        # ラベル（labels/labels_with_coordinates）には入れない（既存フォールバックと同じ方針）。
+        if (extract_drawing_numbers_option or extract_title_option) and not drawing_number_candidates:
+            attrib_labels, attrib_candidates = _build_label_and_drawing_number_candidates(
+                _collect_attrib_entities(doc, msp, selected_layers), selected_layers)
+            if attrib_candidates:
+                all_labels_with_coords = all_labels_with_coords + attrib_labels
+                drawing_number_candidates = attrib_candidates
 
         # 図面番号の判別
         # main_drawing_group は extract_title_and_subtitle() の同一タイトルブロック
